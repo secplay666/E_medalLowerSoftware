@@ -1,0 +1,29 @@
+SET PATH=C:\Program Files\Keil_v5\ARM\ARMCC\Bin;C:\Program Files\flutter\bin;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\Python312\Scripts\;C:\Program Files\Python312\;C:\windows\system32;C:\windows;C:\windows\System32\Wbem;C:\windows\System32\WindowsPowerShell\v1.0\;C:\windows\System32\OpenSSH\;C:\Program Files\Microsoft VS Code\bin;C:\Program Files\Git\cmd;C:\Program Files\HP\HP One Agent;C:\Program Files\TortoiseGit\bin;C:\Program Files\dotnet\;C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\110\Tools\Binn\;C:\Program Files (x86)\Microsoft SQL Server\120\Tools\Binn\;C:\Program Files\Microsoft SQL Server\120\Tools\Binn\;C:\Program Files\Microsoft SQL Server\120\DTS\Binn\;C:\Program Files (x86)\Windows Kits\8.1\Windows Performance Toolkit\;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit\;C:\Program Files\Android\jdk\jdk-17\bin;C:\Program Files\flutter\bin;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\Python312\Scripts\;C:\Program Files\Python312\;C:\windows\system32;C:\windows;C:\windows\System32\Wbem;C:\windows\System32\WindowsPowerShell\v1.0\;C:\windows\System32\OpenSSH\;C:\Program Files\Microsoft VS Code\bin;C:\Program Files\Git\cmd;C:\Program Files\HP\HP One Agent;C:\Program Files\TortoiseGit\bin;C:\Program Files\dotnet\;C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\110\Tools\Binn\;C:\Program Files (x86)\Microsoft SQL Server\120\Tools\Binn\;C:\Program Files\Microsoft SQL Server\120\Tools\Binn\;C:\Program Files\Microsoft SQL Server\120\DTS\Binn\;C:\Program Files (x86)\Windows Kits\8.1\Windows Performance Toolkit\;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit\;C:\Users\secpl\AppData\Local\Microsoft\WindowsApps;C:\Espressif\frameworks\esp-idf-v5.3.1\tools;C:\Users\secpl\.dotnet\tools;C:\Program Files\JetBrains\IntelliJ IDEA 2025.1.1.1\bin;C:\git\flutter\bin;C:\Program Files\Android\jdk\jdk-17\bin;
+SET CPU_TYPE=ARMCM0P
+SET CPU_VENDOR=ARM
+SET UV2_TARGET=wsd
+SET CPU_CLOCK=0x003D0900
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\system_hc32l110c6ua.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmAsm" --Via ".\output\release\startup_hc32l110c6ua._ia"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\main.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmAsm" --Via ".\output\release\main._ia"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\epd.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\draw.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\queue.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\uart_interface.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\e104.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\w25q32.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\uart.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\clk.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\ddl.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\bt.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\interrupts_hc32l110.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmAsm" --Via ".\output\release\interrupts_hc32l110._ia"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\gpio.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\lpuart.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\i2c.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\spi.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\lpm.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\lpt.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmLink" --Via ".\output\release\HC32L110C6UA.lnp"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\fromelf.exe" ".\output\release\HC32L110C6UA.axf" --i32combined --output ".\output\release\HC32L110C6UA.hex"

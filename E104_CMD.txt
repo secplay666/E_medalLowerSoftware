@@ -1,0 +1,28 @@
+AT+BAUD?
+
+AT+ROLE?
+
+AT+RESET
+
+查询、设置广播开关指令
+AT+ADVEN?
+
+查询、设置广播数据指令
+AT+ADVDAT?
+
+查询、设置 iBeacon UUID 指令
+AT+IBCNUUID?
+
+查询、设置 iBeacon Major 指令
+AT+IBCNMAJOR?
+
+查询、设置广播设备名指令
+AT+NAME?
+
+查询 MAC 地址
+AT+MAC?
+
+查询连接状态指令
+AT+CONSTA?
+
+AT+LOGMSG?
