@@ -42,6 +42,8 @@
 #include "lpt.h"
 #include "lpm.h"
 #include "w25q32.h"
+#include "flash_manager.h"
+#include "flash_test.h"
 
 /******************************************************************************
  * Local pre-processor symbols/macros ('#define')                            
@@ -70,6 +72,7 @@ static volatile boolean_t tg8s = FALSE;
 // static volatile boolean_t tg2s = FALSE;
 static float temperature = 0.0, humidity = 0.0;
 static boolean_t linkFlag = FALSE;
+static flash_manager_t g_flash_manager;
 
 /******************************************************************************
  * Local pre-processor symbols/macros ('#define')                             
@@ -251,13 +254,13 @@ static void task3(void)
     }
 }
 
-static void task1(void)
-{
-    DRAW_initScreen();
-    DRAW_DisplayTempHumiRot(temperature,humidity,linkFlag);
+// static void task1(void)
+// {
+//     DRAW_initScreen();
+//     DRAW_DisplayTempHumiRot(temperature,humidity,linkFlag);
 
-    DRAW_outputScreen();
-}
+//     DRAW_outputScreen();
+// }
 
 static void task0(void)
 {
@@ -406,6 +409,46 @@ int32_t main(void)
     delay1ms(100);
     UARTIF_uartPrintf(0, "Chip id is 0x%x ! \n", chipId);
     delay1ms(100);
+    
+    // 初始化Flash管理器
+    UARTIF_uartPrintf(0, "Initializing Flash Manager...\n");
+    flash_result_t result = flash_manager_init(&g_flash_manager);
+    if (result == FLASH_OK) {
+        UARTIF_uartPrintf(0, "Flash Manager initialized successfully!\n");
+        
+        // 获取Flash状态
+        uint32_t used_pages, free_pages, data_count;
+        flash_get_status(&g_flash_manager, &used_pages, &free_pages, &data_count);
+        UARTIF_uartPrintf(0, "Flash Status: Used=%d, Free=%d, Data=%d\n", used_pages, free_pages, data_count);
+        
+        // 测试写入数据
+        uint8_t test_data[] = "Hello Flash Manager!";
+        result = flash_write_data(&g_flash_manager, 0x1001, test_data, sizeof(test_data));
+        if (result == FLASH_OK) {
+            UARTIF_uartPrintf(0, "Test data written successfully!\n");
+            
+            // 测试读取数据
+            uint8_t read_buffer[64];
+            uint32_t read_size = sizeof(read_buffer);
+            result = flash_read_data(&g_flash_manager, 0x1001, read_buffer, &read_size);
+            if (result == FLASH_OK) {
+                UARTIF_uartPrintf(0, "Test data read successfully: %s\n", read_buffer);
+            } else {
+                UARTIF_uartPrintf(0, "Failed to read test data: %d\n", result);
+            }
+        } else {
+             UARTIF_uartPrintf(0, "Failed to write test data: %d\n", result);
+         }
+         
+         // 运行详细测试
+         flash_manager_test();
+         
+         // 运行垃圾回收测试
+         flash_gc_test();
+         
+     } else {
+         UARTIF_uartPrintf(0, "Failed to initialize Flash Manager: %d\n", result);
+     }
 
     // sts = W25Q32_ReadStatusReg();
     // UARTIF_uartPrintf(0, "Status Reg is 0x%x ! \n", sts);

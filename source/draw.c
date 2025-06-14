@@ -253,7 +253,6 @@ void DRAW_initScreen()
 
 void DRAW_outputScreen(void)
 {
-    // EPD_display(screen);
     EPD_WhiteScreenGDEY042Z98ALL(screen);
 }
 
@@ -645,168 +644,168 @@ void DRAW_Image(int x, int y, const unsigned char *imageData, int width, int hei
     }
 }
 
-void DRAW_DisplayTest(void)
-{
-    uint8_t baseX = 20;
-    uint8_t baseY = 20;
-    uint8_t dx = 30;
-    uint8_t dy = 20;
-    const unsigned char* fontArray[10] = 
-    {
-        FONT_18PX_0,
-        FONT_18PX_1,
-        FONT_18PX_2,
-        FONT_18PX_3,
-        FONT_18PX_4,
-        FONT_18PX_5,
-        FONT_18PX_6,
-        FONT_18PX_7,
-        FONT_18PX_8,
-        FONT_18PX_9 
-    };
+// void DRAW_DisplayTest(void)
+// {
+//     uint8_t baseX = 20;
+//     uint8_t baseY = 20;
+//     uint8_t dx = 30;
+//     uint8_t dy = 20;
+//     const unsigned char* fontArray[10] = 
+//     {
+//         FONT_18PX_0,
+//         FONT_18PX_1,
+//         FONT_18PX_2,
+//         FONT_18PX_3,
+//         FONT_18PX_4,
+//         FONT_18PX_5,
+//         FONT_18PX_6,
+//         FONT_18PX_7,
+//         FONT_18PX_8,
+//         FONT_18PX_9 
+//     };
 
-    DRAW_Image(baseX, baseY, fontArray[1], 16, 18,2,0,1);
-    baseX += dx;
-    DRAW_Image(baseX, baseY, fontArray[2], 16, 18,2,0,1);
-    baseX += dx;
-    baseY += dy;
+//     DRAW_Image(baseX, baseY, fontArray[1], 16, 18,2,0,1);
+//     baseX += dx;
+//     DRAW_Image(baseX, baseY, fontArray[2], 16, 18,2,0,1);
+//     baseX += dx;
+//     baseY += dy;
 
-    DRAW_Image(baseX, baseY, fontArray[5], 16, 18,2,0,1);
-    baseX += dx;
-    DRAW_Image(baseX, baseY, fontArray[6], 16, 18,2,0,1);
-    baseX += dx;
-}
+//     DRAW_Image(baseX, baseY, fontArray[5], 16, 18,2,0,1);
+//     baseX += dx;
+//     DRAW_Image(baseX, baseY, fontArray[6], 16, 18,2,0,1);
+//     baseX += dx;
+// }
 
 
-void DRAW_DisplayTempHumiRot(float temperature, float humidity, boolean_t linkFlag)
-{
+// void DRAW_DisplayTempHumiRot(float temperature, float humidity, boolean_t linkFlag)
+// {
 
-    uint8_t baseX = 00;
-    uint8_t baseY = 29;
-    uint8_t dx = 24;
-    uint8_t dy = 76;
-    uint8_t d0,d1,i0,i1;
-    uint8_t integerPart;
-    float decimalPart;
-    boolean_t ts = TRUE;
-    const unsigned char* fontArray[10] = 
-    {
-        FONT_18PX_0,
-        FONT_18PX_1,
-        FONT_18PX_2,
-        FONT_18PX_3,
-        FONT_18PX_4,
-        FONT_18PX_5,
-        FONT_18PX_6,
-        FONT_18PX_7,
-        FONT_18PX_8,
-        FONT_18PX_9 
-    };
+//     uint8_t baseX = 00;
+//     uint8_t baseY = 29;
+//     uint8_t dx = 24;
+//     uint8_t dy = 76;
+//     uint8_t d0,d1,i0,i1;
+//     uint8_t integerPart;
+//     float decimalPart;
+//     boolean_t ts = TRUE;
+//     const unsigned char* fontArray[10] = 
+//     {
+//         FONT_18PX_0,
+//         FONT_18PX_1,
+//         FONT_18PX_2,
+//         FONT_18PX_3,
+//         FONT_18PX_4,
+//         FONT_18PX_5,
+//         FONT_18PX_6,
+//         FONT_18PX_7,
+//         FONT_18PX_8,
+//         FONT_18PX_9 
+//     };
 
-    if(temperature > 99.99)
-    {
-        temperature = 99.99;
-    }
-    else if(temperature < -99.99)
-    {
-        temperature = -99.99;
-    }
-    else
-    {
+//     if(temperature > 99.99)
+//     {
+//         temperature = 99.99;
+//     }
+//     else if(temperature < -99.99)
+//     {
+//         temperature = -99.99;
+//     }
+//     else
+//     {
 
-    }
+//     }
 
-    if (temperature < 0)
-    {
-        ts = FALSE;
-        temperature *= (-1.0);
-    }
+//     if (temperature < 0)
+//     {
+//         ts = FALSE;
+//         temperature *= (-1.0);
+//     }
 
-    if(humidity > 99.99)
-    {
-        humidity = 99.99;
-    }
-    else if(humidity < 0)
-    {
-        humidity = 0;
-    }
-    else
-    {
+//     if(humidity > 99.99)
+//     {
+//         humidity = 99.99;
+//     }
+//     else if(humidity < 0)
+//     {
+//         humidity = 0;
+//     }
+//     else
+//     {
         
-    }
+//     }
 
-    integerPart = (uint8_t)temperature;
-    decimalPart = temperature * 100 - integerPart * 100;
+//     integerPart = (uint8_t)temperature;
+//     decimalPart = temperature * 100 - integerPart * 100;
 
-    i0 = integerPart % 10;
-    i1 = integerPart / 10;
+//     i0 = integerPart % 10;
+//     i1 = integerPart / 10;
 
-    d0 = (uint8_t)decimalPart % 10;
-    d1 = (uint8_t)decimalPart / 10;
+//     d0 = (uint8_t)decimalPart % 10;
+//     d1 = (uint8_t)decimalPart / 10;
 
-    if (!ts)
-    {
-        DRAW_Image(baseX, baseY, FONT_24PX_MINUS, 8, 18,2,1,1);
-        baseX += 10;
-    }
-    else
-    {
-        baseX += 5;
-    }
+//     if (!ts)
+//     {
+//         DRAW_Image(baseX, baseY, FONT_24PX_MINUS, 8, 18,2,1,1);
+//         baseX += 10;
+//     }
+//     else
+//     {
+//         baseX += 5;
+//     }
     
-    DRAW_Image(baseX, baseY, fontArray[i1], 16, 18,2,1,1);
-    baseX += dx;
-    DRAW_Image(baseX, baseY, fontArray[i0], 16, 18,2,1,1);
-    baseX += dx;
-    baseX += 1;
-    DRAW_Image(baseX, baseY, FONT_24PX_POINT, 8, 18,2,1,1);
-    baseX += 8;
+//     DRAW_Image(baseX, baseY, fontArray[i1], 16, 18,2,1,1);
+//     baseX += dx;
+//     DRAW_Image(baseX, baseY, fontArray[i0], 16, 18,2,1,1);
+//     baseX += dx;
+//     baseX += 1;
+//     DRAW_Image(baseX, baseY, FONT_24PX_POINT, 8, 18,2,1,1);
+//     baseX += 8;
 
-    DRAW_Image(baseX, baseY, fontArray[d1], 16, 18,2,1,1);
-    baseX += dx;
-    DRAW_Image(baseX, baseY, fontArray[d0], 16, 18,2,1,1);
-    baseX += dx;
-    DRAW_Image(baseX, baseY, FONT_24PX_DEGREE, 24, 18,2,1,1);
+//     DRAW_Image(baseX, baseY, fontArray[d1], 16, 18,2,1,1);
+//     baseX += dx;
+//     DRAW_Image(baseX, baseY, fontArray[d0], 16, 18,2,1,1);
+//     baseX += dx;
+//     DRAW_Image(baseX, baseY, FONT_24PX_DEGREE, 24, 18,2,1,1);
 
-    baseX = 5;
-    baseY += dy;
+//     baseX = 5;
+//     baseY += dy;
 
-    integerPart = (uint8_t)humidity;
-    decimalPart = humidity * 100 - integerPart * 100;
+//     integerPart = (uint8_t)humidity;
+//     decimalPart = humidity * 100 - integerPart * 100;
 
-    i0 = integerPart % 10;
-    i1 = integerPart / 10;
+//     i0 = integerPart % 10;
+//     i1 = integerPart / 10;
 
-    d0 = (uint8_t)decimalPart % 10;
-    d1 = (uint8_t)decimalPart / 10;
+//     d0 = (uint8_t)decimalPart % 10;
+//     d1 = (uint8_t)decimalPart / 10;
 
-    DRAW_Image(baseX, baseY, fontArray[i1], 16, 18,2,1,1);
-    baseX += dx;
-    DRAW_Image(baseX, baseY, fontArray[i0], 16, 18,2,1,1);
-    baseX += dx;
+//     DRAW_Image(baseX, baseY, fontArray[i1], 16, 18,2,1,1);
+//     baseX += dx;
+//     DRAW_Image(baseX, baseY, fontArray[i0], 16, 18,2,1,1);
+//     baseX += dx;
 
-    baseX += 1;
-    DRAW_Image(baseX, baseY, FONT_24PX_POINT, 8, 18,2,1,1);
-    baseX += 8;
+//     baseX += 1;
+//     DRAW_Image(baseX, baseY, FONT_24PX_POINT, 8, 18,2,1,1);
+//     baseX += 8;
 
-    DRAW_Image(baseX, baseY, fontArray[d1], 16, 18,2,1,1);
-    baseX += dx;
-    DRAW_Image(baseX, baseY, fontArray[d0], 16, 18,2,1,1);
-    baseX += dx;
-    DRAW_Image(baseX, baseY, FONT_24PX_PER, 24, 18,2,1,1);
+//     DRAW_Image(baseX, baseY, fontArray[d1], 16, 18,2,1,1);
+//     baseX += dx;
+//     DRAW_Image(baseX, baseY, fontArray[d0], 16, 18,2,1,1);
+//     baseX += dx;
+//     DRAW_Image(baseX, baseY, FONT_24PX_PER, 24, 18,2,1,1);
 
-    DRAW_Image(2, 2, FONT_24PX_WEN, 24, 23,1,1,1);
-    DRAW_Image(32,2 , FONT_24PX_DU, 24, 23,1,1,1);
+//     DRAW_Image(2, 2, FONT_24PX_WEN, 24, 23,1,1,1);
+//     DRAW_Image(32,2 , FONT_24PX_DU, 24, 23,1,1,1);
 
-    DRAW_Image(2, 78, FONT_24PX_SHI, 24, 23,1,1,1);
-    DRAW_Image(32, 78, FONT_24PX_DU, 24, 23,1,1,1);
+//     DRAW_Image(2, 78, FONT_24PX_SHI, 24, 23,1,1,1);
+//     DRAW_Image(32, 78, FONT_24PX_DU, 24, 23,1,1,1);
 
-    if (linkFlag)
-    {
-        DRAW_Image(120, 2, FONT_24PX_BTLOGO, 24, 22,1,1,1);
-    }
+//     if (linkFlag)
+//     {
+//         DRAW_Image(120, 2, FONT_24PX_BTLOGO, 24, 22,1,1,1);
+//     }
 
-}
+// }
 
 /******************************************************************************
  * EOF (not truncated)

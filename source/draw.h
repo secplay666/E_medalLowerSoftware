@@ -43,7 +43,7 @@ void DRAW_initScreen(void);
 void DRAW_outputScreen(void);
 
 // 绘制一个字符
-void DRAW_char(int x, int y, char c, int fontSize, int color);
+// void DRAW_char(int x, int y, char c, int fontSize, int color);
 
 // 绘制字符串
 // void DRAW_string(int x, int y, const char *str, int fontSize, int color);
@@ -53,9 +53,9 @@ void DRAW_char(int x, int y, char c, int fontSize, int color);
 // void DRAW_rotatedString(int x, int y, const char *str, int fontSize, int color);
 // void DRAW_rotatedChar(int x, int y, char c, int fontSize, int color);
 // void DRAW_Char40_Rot(int x, int y, char c, int color);
-void DRAW_DisplayTempHumiRot(float temperature, float humidity, boolean_t linkFlag);
-void DRAW_Image(int x, int y, const unsigned char *imageData, int width, int height, int scale, int invertColor, int rotate90);
-void DRAW_DisplayTest(void);
+// void DRAW_DisplayTempHumiRot(float temperature, float humidity, boolean_t linkFlag);
+// void DRAW_Image(int x, int y, const unsigned char *imageData, int width, int height, int scale, int invertColor, int rotate90);
+// void DRAW_DisplayTest(void);
 
 
 #endif // SCREEN_H

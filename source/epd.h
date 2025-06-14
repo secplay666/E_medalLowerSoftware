@@ -13,12 +13,8 @@
 
 void EPD_initWft0154cz17(boolean_t isfull);
 void EPD_poweroff(void);
-void EPD_display(unsigned char data[][BYTES_PER_ROW]);
-void EPD_initwft0420cz15(void);
-void EPD_displaywft0420cz15(void);
 void EPD_initGDEY042Z98(void);
 void EPD_WhiteScreenGDEY042Z98ALL(unsigned char data[][BYTES_PER_ROW]);
-void EPD_display420(unsigned char data[][BYTES_PER_ROW]);
 void EPD_WhiteScreenGDEY042Z98ALLBlack(void);
 void EPD_WhiteScreenGDEY042Z98ALLWrite(void);
 void EPD_WhiteScreenGDEY042Z98ALLRed(void);
