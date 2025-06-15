@@ -13,6 +13,7 @@ SET CPU_CLOCK=0x003D0900
 "C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\uart_interface.__i"
 "C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\e104.__i"
 "C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\w25q32.__i"
+"C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\flash_manager.__i"
 "C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\uart.__i"
 "C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\clk.__i"
 "C:\Program Files\Keil_v5\ARM\ARMCC\Bin\ArmCC" --Via ".\output\release\ddl.__i"

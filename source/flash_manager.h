@@ -18,7 +18,7 @@ typedef enum {
     FLASH_ERROR_INIT_FAIL       // 初始化失败
 } flash_result_t;
 
-// Segment头结构（256字节）
+// Segment头结构（14字节）
 typedef struct {
     uint8_t header_magic;       // Segment头魔法数字 区分数据page
     uint8_t segment_id;         // Segment ID (0或1)
@@ -51,7 +51,6 @@ typedef struct {
     uint8_t  gc_in_progress;           // 垃圾回收进行标志
     uint8_t  reserved;                 // 保留字段
     data_entry_t data_entries[MAX_DATA_ENTRIES]; // 数据映射表
-    uint8_t temp_page[FLASH_PAGE_SIZE];          // 垃圾回收临时缓冲区
 } flash_manager_t;
 
 // 函数声明

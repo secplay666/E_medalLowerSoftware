@@ -61,11 +61,12 @@ void W25Q32_CS(uint8_t state)
 /* 初始化SPI接口 */
 uint8_t W25Q32_Init(void) 
 {
+	uint32_t id = 0;
     Gpio_InitIO(1, 4, GpioDirOut);
     Gpio_SetIO(1, 4, 1);               //RST输出高
     
     // 检查Flash是否正常响应
-    uint32_t id = W25Q32_ReadID();
+     id = W25Q32_ReadID();
     if (id == 0x00000000 || id == 0xFFFFFFFF) {
         return W25Q32_ERROR;  // Flash未正常响应
     }
@@ -106,12 +107,13 @@ uint8_t W25Q32_WaitForReady(void)
 /* 写使能命令 (必须在前置擦除/编程操作前调用) */
 uint8_t W25Q32_WriteEnable(void) 
 {
+	uint8_t status = 0;
     W25Q32_CS(0);
     Spi_SendData(W25Q32_CMD_WRITE_ENABLE);
     W25Q32_CS(1);
     
     // 检查写使能位是否设置成功
-    uint8_t status = W25Q32_ReadStatusReg();
+     status = W25Q32_ReadStatusReg();
     if ((status & 0x02) == 0) {  // BIT1=0表示写使能失败
         return W25Q32_ERROR;
     }

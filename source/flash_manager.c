@@ -13,7 +13,12 @@ static flash_result_t remove_data_entry(flash_manager_t* manager, uint16_t data_
 static flash_result_t erase_segment(uint32_t segment_base);
 static flash_result_t copy_valid_pages(flash_manager_t* manager);
  
-static uint8_t buffer[256];
+/******************************************************************************
+ * Local variable definitions ('static')                                      *
+ ******************************************************************************/
+
+// 静态缓冲区，用于Flash读写操作的中间变量
+static uint8_t g_flash_buffer[FLASH_PAGE_SIZE];
 
 /**
  * @brief 计算CRC32校验值
@@ -42,17 +47,29 @@ static uint32_t calculate_crc32(const uint8_t* data, uint32_t length)
  */
 static flash_result_t read_segment_header(uint32_t segment_base, segment_header_t* header)
 {
-    if (W25Q32_ReadData(segment_base, (uint8_t*)header, sizeof(segment_header_t)) != 0) {
+	uint32_t calculated_crc = 0;
+    // 使用静态缓冲区读取数据
+    if (W25Q32_ReadData(segment_base, g_flash_buffer, sizeof(segment_header_t)) != 0) {
         return FLASH_ERROR_READ_FAIL;
     }
+    
+    // 从缓冲区复制到结构体
+    header->header_magic = g_flash_buffer[0];
+    header->segment_id = g_flash_buffer[1];
+    header->status_magic = (uint32_t)g_flash_buffer[2] | ((uint32_t)g_flash_buffer[3] << 8) | 
+                          ((uint32_t)g_flash_buffer[4] << 16) | ((uint32_t)g_flash_buffer[5] << 24);
+    header->gc_count = (uint32_t)g_flash_buffer[6] | ((uint32_t)g_flash_buffer[7] << 8) | 
+                      ((uint32_t)g_flash_buffer[8] << 16) | ((uint32_t)g_flash_buffer[9] << 24);
+    header->crc32 = (uint32_t)g_flash_buffer[10] | ((uint32_t)g_flash_buffer[11] << 8) | 
+                   ((uint32_t)g_flash_buffer[12] << 16) | ((uint32_t)g_flash_buffer[13] << 24);
     
     // 验证头魔法数字
     if (header->header_magic != SEGMENT_HEADER_MAGIC) {
         return FLASH_ERROR_CRC_FAIL;
     }
     
-    // 验证CRC32 - 只校验有效部分（不包括padding和crc32字段）
-    uint32_t calculated_crc = calculate_crc32((uint8_t*)header, 14); // header_magic(1) + segment_id(1) + status_magic(4) + gc_count(4) + crc32(4) = 14字节有效数据
+    // 验证CRC32 - 只校验有效部分（不包括crc32字段）
+    calculated_crc = calculate_crc32(g_flash_buffer, 10); // header_magic(1) + segment_id(1) + status_magic(4) + gc_count(4) = 10字节有效数据
     if (calculated_crc != header->crc32) {
         return FLASH_ERROR_CRC_FAIL;
     }
@@ -65,25 +82,36 @@ static flash_result_t read_segment_header(uint32_t segment_base, segment_header_
  */
 static flash_result_t write_segment_header(uint32_t segment_base, const segment_header_t* header)
 {
-    segment_header_t temp_header;
-    memset(&temp_header, 0, sizeof(segment_header_t));
+	uint32_t crc32 = 0;
+    // 清空缓冲区
+    memset(g_flash_buffer, 0, FLASH_PAGE_SIZE);
     
-    // 复制有效字段
-    temp_header.header_magic = SEGMENT_HEADER_MAGIC;
-    temp_header.segment_id = header->segment_id;
-    temp_header.status_magic = header->status_magic;
-    temp_header.gc_count = header->gc_count;
+    // 将结构体字段复制到缓冲区
+    g_flash_buffer[0] = SEGMENT_HEADER_MAGIC;
+    g_flash_buffer[1] = header->segment_id;
+    g_flash_buffer[2] = (uint8_t)(header->status_magic & 0xFF);
+    g_flash_buffer[3] = (uint8_t)((header->status_magic >> 8) & 0xFF);
+    g_flash_buffer[4] = (uint8_t)((header->status_magic >> 16) & 0xFF);
+    g_flash_buffer[5] = (uint8_t)((header->status_magic >> 24) & 0xFF);
+    g_flash_buffer[6] = (uint8_t)(header->gc_count & 0xFF);
+    g_flash_buffer[7] = (uint8_t)((header->gc_count >> 8) & 0xFF);
+    g_flash_buffer[8] = (uint8_t)((header->gc_count >> 16) & 0xFF);
+    g_flash_buffer[9] = (uint8_t)((header->gc_count >> 24) & 0xFF);
     
-    // 计算CRC32 - 只计算有效部分（不包括padding和crc32字段）
-    temp_header.crc32 = calculate_crc32((uint8_t*)&temp_header, 10); // header_magic(1) + segment_id(1) + status_magic(4) + gc_count(4) = 10字节有效数据
+    // 计算CRC32 - 只计算有效部分（不包括crc32字段）
+    crc32 = calculate_crc32(g_flash_buffer, 10); // header_magic(1) + segment_id(1) + status_magic(4) + gc_count(4) = 10字节有效数据
+    g_flash_buffer[10] = (uint8_t)(crc32 & 0xFF);
+    g_flash_buffer[11] = (uint8_t)((crc32 >> 8) & 0xFF);
+    g_flash_buffer[12] = (uint8_t)((crc32 >> 16) & 0xFF);
+    g_flash_buffer[13] = (uint8_t)((crc32 >> 24) & 0xFF);
     
     // 擦除第一个扇区
     if (W25Q32_EraseSector(segment_base) != 0) {
         return FLASH_ERROR_ERASE_FAIL;
     }
     
-    // 写入header
-    if (W25Q32_WritePage(segment_base, (uint8_t*)&temp_header, sizeof(segment_header_t)) != 0) {
+    // 写入header（写入整个页面以保持256字节对齐）
+    if (W25Q32_WritePage(segment_base, g_flash_buffer, FLASH_PAGE_SIZE) != 0) {
         return FLASH_ERROR_WRITE_FAIL;
     }
     
@@ -98,7 +126,7 @@ static flash_result_t scan_segment_pages(flash_manager_t* manager, uint32_t segm
     data_page_t page;
     uint32_t page_address;
     uint32_t i;
-    
+     uint32_t calculated_crc = 0;
     manager->data_count = 0;
     
     // 从第1个page开始扫描（第0个是header）
@@ -106,9 +134,17 @@ static flash_result_t scan_segment_pages(flash_manager_t* manager, uint32_t segm
         page_address = segment_base + i * FLASH_PAGE_SIZE;
         
         // 读取page
-        if (W25Q32_ReadData(page_address, (uint8_t*)&page, sizeof(data_page_t)) != 0) {
+        if (W25Q32_ReadData(page_address, g_flash_buffer, sizeof(data_page_t)) != 0) {
             return FLASH_ERROR_READ_FAIL;
         }
+        
+        // 从缓冲区复制到结构体
+        page.data_id = (uint16_t)g_flash_buffer[0] | ((uint16_t)g_flash_buffer[1] << 8);
+        page.data_size = g_flash_buffer[2];
+        page.reserved = g_flash_buffer[3];
+        memcpy(page.data, &g_flash_buffer[4], 248);
+        page.crc32 = (uint32_t)g_flash_buffer[252] | ((uint32_t)g_flash_buffer[253] << 8) | 
+                     ((uint32_t)g_flash_buffer[254] << 16) | ((uint32_t)g_flash_buffer[255] << 24);
         
         // 检查是否为空page
         if (page.data_id == INVALID_DATA_ID) {
@@ -118,7 +154,7 @@ static flash_result_t scan_segment_pages(flash_manager_t* manager, uint32_t segm
         }
         
         // 验证CRC32
-        uint32_t calculated_crc = calculate_crc32(page.data, page.data_size);
+        calculated_crc = calculate_crc32(page.data, page.data_size);
         if (calculated_crc != page.crc32) {
             // CRC错误，跳过这个page
             continue;
@@ -159,12 +195,13 @@ static int16_t find_data_entry(flash_manager_t* manager, uint16_t data_id)
  */
 static flash_result_t add_data_entry(flash_manager_t* manager, uint16_t data_id, uint32_t page_address)
 {
+	int16_t index = 0;
     if (manager->data_count >= MAX_DATA_ENTRIES) {
         return FLASH_ERROR_NO_SPACE;
     }
     
     // 检查是否已存在，如果存在则更新地址
-    int16_t index = find_data_entry(manager, data_id);
+    index = find_data_entry(manager, data_id);
     if (index >= 0) {
         manager->data_entries[index].page_address = page_address;
     } else {
@@ -183,12 +220,13 @@ static flash_result_t add_data_entry(flash_manager_t* manager, uint16_t data_id,
 static flash_result_t remove_data_entry(flash_manager_t* manager, uint16_t data_id)
 {
     int16_t index = find_data_entry(manager, data_id);
+	    uint16_t i;
     if (index < 0) {
         return FLASH_ERROR_NOT_FOUND;
     }
     
     // 将后面的条目前移
-    uint16_t i;
+
     for (i = index; i < manager->data_count - 1; i++) {
         manager->data_entries[i] = manager->data_entries[i + 1];
     }
@@ -226,12 +264,12 @@ static flash_result_t copy_valid_pages(flash_manager_t* manager)
     
     for (i = 0; i < manager->data_count; i++) {
         // 读取源page
-        if (W25Q32_ReadData(manager->data_entries[i].page_address, manager->temp_page, FLASH_PAGE_SIZE) != 0) {
+        if (W25Q32_ReadData(manager->data_entries[i].page_address, g_flash_buffer, FLASH_PAGE_SIZE) != 0) {
             return FLASH_ERROR_READ_FAIL;
         }
         
         // 写入目标page
-        if (W25Q32_WritePage(dest_address, manager->temp_page, FLASH_PAGE_SIZE) != 0) {
+        if (W25Q32_WritePage(dest_address, g_flash_buffer, FLASH_PAGE_SIZE) != 0) {
             return FLASH_ERROR_WRITE_FAIL;
         }
         
@@ -322,9 +360,9 @@ flash_result_t flash_manager_init(flash_manager_t* manager)
  */
 flash_result_t flash_write_data(flash_manager_t* manager, uint16_t data_id, const uint8_t* data, uint8_t size)
 {
-    data_page_t page;
     flash_result_t result;
-    
+    uint32_t crc32;
+    uint32_t segment_end = 0;
     if (manager == NULL || data == NULL || size == 0 || size > 248 || data_id == INVALID_DATA_ID) {
         return FLASH_ERROR_INVALID_PARAM;
     }
@@ -337,15 +375,25 @@ flash_result_t flash_write_data(flash_manager_t* manager, uint16_t data_id, cons
         }
     }
     
-    // 构造page数据
-    memset(&page, 0, sizeof(data_page_t));
-    page.data_id = data_id;
-    page.data_size = size;
-    memcpy(page.data, data, size);
-    page.crc32 = calculate_crc32(page.data, page.data_size);
+    // 清空缓冲区
+    memset(g_flash_buffer, 0, FLASH_PAGE_SIZE);
+    
+    // 将数据页字段复制到缓冲区
+    g_flash_buffer[0] = (uint8_t)(data_id & 0xFF);
+    g_flash_buffer[1] = (uint8_t)((data_id >> 8) & 0xFF);
+    g_flash_buffer[2] = size;
+    g_flash_buffer[3] = 0; // reserved
+    memcpy(&g_flash_buffer[4], data, size);
+    
+    // 计算CRC32（只计算数据部分）
+    crc32 = calculate_crc32(&g_flash_buffer[4], size);
+    g_flash_buffer[252] = (uint8_t)(crc32 & 0xFF);
+    g_flash_buffer[253] = (uint8_t)((crc32 >> 8) & 0xFF);
+    g_flash_buffer[254] = (uint8_t)((crc32 >> 16) & 0xFF);
+    g_flash_buffer[255] = (uint8_t)((crc32 >> 24) & 0xFF);
     
     // 写入Flash
-    if (W25Q32_WritePage(manager->next_write_address, (uint8_t*)&page, sizeof(data_page_t)) != 0) {
+    if (W25Q32_WritePage(manager->next_write_address, g_flash_buffer, FLASH_PAGE_SIZE) != 0) {
         return FLASH_ERROR_WRITE_FAIL;
     }
     
@@ -359,7 +407,7 @@ flash_result_t flash_write_data(flash_manager_t* manager, uint16_t data_id, cons
     manager->next_write_address += FLASH_PAGE_SIZE;
     
     // 检查是否到达segment末尾
-    uint32_t segment_end = manager->active_segment_base + FLASH_SEGMENT_SIZE;
+    segment_end = manager->active_segment_base + FLASH_SEGMENT_SIZE;
     if (manager->next_write_address >= segment_end) {
         manager->next_write_address = INVALID_ADDRESS;
     }
@@ -372,8 +420,9 @@ flash_result_t flash_write_data(flash_manager_t* manager, uint16_t data_id, cons
  */
 flash_result_t flash_read_data(flash_manager_t* manager, uint16_t data_id, uint8_t* data, uint8_t* size)
 {
-    data_page_t page;
     int16_t index;
+    uint32_t calculated_crc, stored_crc;
+    uint8_t page_data_size;
     
     if (manager == NULL || data == NULL || size == NULL || data_id == INVALID_DATA_ID) {
         return FLASH_ERROR_INVALID_PARAM;
@@ -385,26 +434,31 @@ flash_result_t flash_read_data(flash_manager_t* manager, uint16_t data_id, uint8
         return FLASH_ERROR_NOT_FOUND;
     }
     
-    // 读取page数据
-    if (W25Q32_ReadData(manager->data_entries[index].page_address, (uint8_t*)&page, sizeof(data_page_t)) != 0) {
+    // 读取数据页到缓冲区
+    if (W25Q32_ReadData(manager->data_entries[index].page_address, g_flash_buffer, FLASH_PAGE_SIZE) != 0) {
         return FLASH_ERROR_READ_FAIL;
     }
     
-    // 验证CRC32
-    uint32_t calculated_crc = calculate_crc32(page.data, page.data_size);
-    if (calculated_crc != page.crc32) {
+    // 从缓冲区解析数据页字段
+    page_data_size = g_flash_buffer[2];
+    stored_crc = (uint32_t)g_flash_buffer[252] | ((uint32_t)g_flash_buffer[253] << 8) | 
+                 ((uint32_t)g_flash_buffer[254] << 16) | ((uint32_t)g_flash_buffer[255] << 24);
+    
+    // 验证CRC32（只验证数据部分）
+    calculated_crc = calculate_crc32(&g_flash_buffer[4], page_data_size);
+    if (calculated_crc != stored_crc) {
         return FLASH_ERROR_CRC_FAIL;
     }
     
     // 检查缓冲区大小
-    if (*size < page.data_size) {
-        *size = page.data_size;
+    if (*size < page_data_size) {
+        *size = page_data_size;
         return FLASH_ERROR_INVALID_PARAM;
     }
     
     // 复制数据
-    memcpy(data, page.data, page.data_size);
-    *size = page.data_size;
+    memcpy(data, &g_flash_buffer[4], page_data_size);
+    *size = page_data_size;
     
     return FLASH_OK;
 }
@@ -428,7 +482,9 @@ flash_result_t flash_garbage_collect(flash_manager_t* manager)
 {
     segment_header_t header;
     flash_result_t result;
-    
+    segment_header_t active_header;
+	uint32_t new_gc_count = 0;
+	uint32_t temp = 0;
     if (manager == NULL) {
         return FLASH_ERROR_INVALID_PARAM;
     }
@@ -474,9 +530,9 @@ flash_result_t flash_garbage_collect(flash_manager_t* manager)
     }
     
     // 5. 读取当前激活segment的gc_count并递增
-    segment_header_t active_header;
+
     result = read_segment_header(manager->active_segment_base, &active_header);
-    uint32_t new_gc_count = (result == FLASH_OK) ? active_header.gc_count + 1 : 1;
+    new_gc_count = (result == FLASH_OK) ? active_header.gc_count + 1 : 1;
     
     // 将新segment标记为激活
     memset(&header, 0, sizeof(segment_header_t));
@@ -491,7 +547,7 @@ flash_result_t flash_garbage_collect(flash_manager_t* manager)
     }
     
     // 6. 交换激活和备用segment
-    uint32_t temp = manager->active_segment_base;
+    temp = manager->active_segment_base;
     manager->active_segment_base = manager->backup_segment_base;
     manager->backup_segment_base = temp;
     

@@ -43,7 +43,7 @@
 #include "lpm.h"
 #include "w25q32.h"
 #include "flash_manager.h"
-#include "flash_test.h"
+// #include "flash_test.h"
 
 /******************************************************************************
  * Local pre-processor symbols/macros ('#define')                            
@@ -73,7 +73,8 @@ static volatile boolean_t tg8s = FALSE;
 static float temperature = 0.0, humidity = 0.0;
 static boolean_t linkFlag = FALSE;
 static flash_manager_t g_flash_manager;
-
+static uint8_t read_buffer[64];
+static uint8_t test_data[] = "Hello Flash Manager!";
 /******************************************************************************
  * Local pre-processor symbols/macros ('#define')                             
  ******************************************************************************/
@@ -137,41 +138,24 @@ void LptInt(void)
 *  Poly:0011 0001 0x31
 **********************************************************/
 
-static uint8_t calcCrc8(unsigned char *message,unsigned char num)
-{
-   uint8_t i;
-   uint8_t byte;
-   uint8_t crc =0xFF;
-   for (byte = 0;byte<num;byte++)
-   {
-       crc^=(message[byte]);
-       for(i=8;i>0;--i)
-       {
-           if(crc&0x80)
-               crc=(crc<<1)^0x31;
-           else
-               crc=(crc<<1);
-       }
-   }
-   return crc;
-}
-
-
-static float temperatureConvert(uint32_t d0, uint32_t d1, uint32_t d2)
-{
-   float result = 0.0;
-   uint32_t data = (d2 | (d1 << 8) | (((d0 & 0x0000000f)) << 16));
-   result = (data / 1048576.0)*200.0 - 50.0;
-   return result;
-}
-
-static float humidityConvert(uint32_t d0, uint32_t d1, uint32_t d2)
-{
-   float result = 0.0;
-   uint32_t data = (((d2 & 0x000000f0) >> 4) | (d1 << 4) | (d0 << 12));
-   result = (data / 1048576.0)*100.0;
-   return result;
-}
+//static uint8_t calcCrc8(unsigned char *message,unsigned char num)
+//{
+//   uint8_t i;
+//   uint8_t byte;
+//   uint8_t crc =0xFF;
+//   for (byte = 0;byte<num;byte++)
+//   {
+//       crc^=(message[byte]);
+//       for(i=8;i>0;--i)
+//       {
+//           if(crc&0x80)
+//               crc=(crc<<1)^0x31;
+//           else
+//               crc=(crc<<1);
+//       }
+//   }
+//   return crc;
+//}
 
 static void timInit(void)
 {
@@ -362,9 +346,11 @@ int32_t main(void)
 //    uint8_t data = 0;
 //   uint8_t crc = 0;
 //    boolean_t trig1s = FALSE;
+	flash_result_t result = FLASH_OK;
     uint32_t chipId = 0;
    uint16_t i = 0;
-   uint8_t sts = 0;
+    uint8_t read_size = sizeof(read_buffer);
+	 uint32_t used_pages, free_pages, data_count;
     UARTIF_uartInit();
     // i2cInit();
     UARTIF_lpuartInit();
@@ -412,24 +398,23 @@ int32_t main(void)
     
     // 初始化Flash管理器
     UARTIF_uartPrintf(0, "Initializing Flash Manager...\n");
-    flash_result_t result = flash_manager_init(&g_flash_manager);
+    result = flash_manager_init(&g_flash_manager);
     if (result == FLASH_OK) {
         UARTIF_uartPrintf(0, "Flash Manager initialized successfully!\n");
         
         // 获取Flash状态
-        uint32_t used_pages, free_pages, data_count;
+
         flash_get_status(&g_flash_manager, &used_pages, &free_pages, &data_count);
         UARTIF_uartPrintf(0, "Flash Status: Used=%d, Free=%d, Data=%d\n", used_pages, free_pages, data_count);
         
         // 测试写入数据
-        uint8_t test_data[] = "Hello Flash Manager!";
+
         result = flash_write_data(&g_flash_manager, 0x1001, test_data, (uint8_t)sizeof(test_data));
         if (result == FLASH_OK) {
             UARTIF_uartPrintf(0, "Test data written successfully!\n");
             
             // 测试读取数据
-            uint8_t read_buffer[64];
-            uint8_t read_size = sizeof(read_buffer);
+            
             result = flash_read_data(&g_flash_manager, 0x1001, read_buffer, &read_size);
             if (result == FLASH_OK) {
                 UARTIF_uartPrintf(0, "Test data read successfully: %s\n", read_buffer);
@@ -441,10 +426,10 @@ int32_t main(void)
          }
          
          // 运行详细测试
-         flash_manager_test();
+        //  flash_manager_test();
          
-         // 运行垃圾回收测试
-         flash_gc_test();
+        //  // 运行垃圾回收测试
+        //  flash_gc_test();
          
      } else {
          UARTIF_uartPrintf(0, "Failed to initialize Flash Manager: %d\n", result);
