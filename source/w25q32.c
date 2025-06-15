@@ -59,10 +59,18 @@ void W25Q32_CS(uint8_t state)
 }
 
 /* 初始化SPI接口 */
-void W25Q32_Init(void) 
+uint8_t W25Q32_Init(void) 
 {
     Gpio_InitIO(1, 4, GpioDirOut);
     Gpio_SetIO(1, 4, 1);               //RST输出高
+    
+    // 检查Flash是否正常响应
+    uint32_t id = W25Q32_ReadID();
+    if (id == 0x00000000 || id == 0xFFFFFFFF) {
+        return W25Q32_ERROR;  // Flash未正常响应
+    }
+    
+    return W25Q32_OK;
 }
 
 /* 读取状态寄存器1 (BUSY位在bit0) */
@@ -79,20 +87,36 @@ uint8_t W25Q32_ReadStatusReg(void)
 }
 
 /* 等待Flash就绪 (检查BUSY位) */
-void W25Q32_WaitForReady(void) 
+uint8_t W25Q32_WaitForReady(void) 
 {
-    while (W25Q32_ReadStatusReg() & 0x01) {  // BIT0=1表示忙
+    uint32_t timeout = 10000;  // 超时计数器
+    
+    while ((W25Q32_ReadStatusReg() & 0x01) && timeout > 0) {  // BIT0=1表示忙
         delay100us(1);
+        timeout--;
     }
+    
+    if (timeout == 0) {
+        return W25Q32_ERROR;  // 超时错误
+    }
+    
+    return W25Q32_OK;
 }
 
 /* 写使能命令 (必须在前置擦除/编程操作前调用) */
-void W25Q32_WriteEnable(void) 
+uint8_t W25Q32_WriteEnable(void) 
 {
-    
     W25Q32_CS(0);
     Spi_SendData(W25Q32_CMD_WRITE_ENABLE);
     W25Q32_CS(1);
+    
+    // 检查写使能位是否设置成功
+    uint8_t status = W25Q32_ReadStatusReg();
+    if ((status & 0x02) == 0) {  // BIT1=0表示写使能失败
+        return W25Q32_ERROR;
+    }
+    
+    return W25Q32_OK;
 }
 
 void W25Q32_WriteDisable(void) 
@@ -120,90 +144,131 @@ uint32_t W25Q32_ReadID(void)
 }
 
 /* 扇区擦除 (4KB) */
-void W25Q32_EraseSector(uint32_t sectorAddr) 
+uint8_t W25Q32_EraseSector(uint32_t sectorAddr) 
 {    
-    if (sectorAddr == 0)
-    {
-        return;
+    // 检查地址有效性
+    if (sectorAddr >= W25Q32_TOTAL_SIZE) {
+        return W25Q32_ERROR;
     }
 
-    W25Q32_WriteEnable();          // 使能写操作
+    // 使能写操作
+    if (W25Q32_WriteEnable() != W25Q32_OK) {
+        return W25Q32_ERROR;
+    }
+    
     W25Q32_CS(0);
-
     Spi_SendData(W25Q32_CMD_SECTOR_ERASE);
     Spi_SendData((uint8_t)((sectorAddr >> 16) & 0xFF));
     Spi_SendData((uint8_t)((sectorAddr >> 8) & 0xFF));
     Spi_SendData((uint8_t)(sectorAddr & 0xFF));
-
     W25Q32_CS(1);
-    // W25Q32_WaitForReady();         // 等待擦除完成
+    
+    // 等待擦除完成
+    if (W25Q32_WaitForReady() != W25Q32_OK) {
+        return W25Q32_ERROR;
+    }
+    
+    return W25Q32_OK;
 }
 
 /* 整片擦除 */
-void W25Q32_EraseChip(void) 
+uint8_t W25Q32_EraseChip(void) 
 {
-    W25Q32_WriteEnable();
+    // 使能写操作
+    if (W25Q32_WriteEnable() != W25Q32_OK) {
+        return W25Q32_ERROR;
+    }
+    
     W25Q32_CS(0);
     Spi_SendData(W25Q32_CMD_CHIP_ERASE);
-
     W25Q32_CS(1);
-    W25Q32_WaitForReady();         // 等待时间较长（秒级）
+    
+    // 等待擦除完成（时间较长）
+    if (W25Q32_WaitForReady() != W25Q32_OK) {
+        return W25Q32_ERROR;
+    }
+    
+    return W25Q32_OK;
 }
 
 /* 读取数据 (支持跨页连续读) */
-void W25Q32_ReadData(uint32_t addr, uint8_t *buf, uint32_t len) 
+uint8_t W25Q32_ReadData(uint32_t addr, uint8_t *buf, uint32_t len) 
 {
     uint32_t i = 0;    
-    if (buf == NULL || len == 0)
-    {
-        return;
+    
+    // 参数检查
+    if (buf == NULL || len == 0) {
+        return W25Q32_ERROR;
+    }
+    
+    // 地址范围检查
+    if (addr >= W25Q32_TOTAL_SIZE || (addr + len) > W25Q32_TOTAL_SIZE) {
+        return W25Q32_ERROR;
     }
 
     W25Q32_CS(0);
-
     Spi_SendData(W25Q32_CMD_READ_DATA);
     Spi_SendData((uint8_t)((addr >> 16) & 0xFF));
     Spi_SendData((uint8_t)((addr >> 8) & 0xFF));
     Spi_SendData((uint8_t)(addr & 0xFF));
 
-
-    for (;i < len;i++)
-    {
+    for (i = 0; i < len; i++) {
         *(buf + i) = Spi_ReceiveData();
     }
     W25Q32_CS(1);
+    
+    return W25Q32_OK;
 }
 
 /* 写入数据 (页编程，单次最大256字节) */
-void W25Q32_WritePage(uint32_t addr, uint8_t *buf, uint16_t len) 
+uint8_t W25Q32_WritePage(uint32_t addr, uint8_t *buf, uint16_t len) 
 {
     uint32_t i = 0;
     
-    if (buf == NULL || len == 0)
-    {
-        return;
+    // 参数检查
+    if (buf == NULL || len == 0) {
+        return W25Q32_ERROR;
     }
-        // 长度不能超过页边界
-    if (len > W25Q32_PAGE_SIZE)
-    {
-     len = W25Q32_PAGE_SIZE;
+    
+    // 地址范围检查
+    if (addr >= W25Q32_TOTAL_SIZE) {
+        return W25Q32_ERROR;
+    }
+    
+    // 长度不能超过页边界
+    if (len > W25Q32_PAGE_SIZE) {
+        return W25Q32_ERROR;
+    }
+    
+    // 检查是否跨页
+    if ((addr & 0xFF) + len > W25Q32_PAGE_SIZE) {
+        return W25Q32_ERROR;
     }
 
-    W25Q32_WriteEnable();          // 必须使能写操作
+    // 使能写操作
+    if (W25Q32_WriteEnable() != W25Q32_OK) {
+        return W25Q32_ERROR;
+    }
+    
     W25Q32_CS(0);
     Spi_SendData(W25Q32_CMD_PAGE_PROGRAM);
     Spi_SendData((uint8_t)((addr >> 16) & 0xFF));
     Spi_SendData((uint8_t)((addr >> 8) & 0xFF));
     Spi_SendData((uint8_t)(addr & 0xFF));
-    for (;i < len;i++)
-    {
+    
+    for (i = 0; i < len; i++) {
         Spi_SendData(*(buf + i));
-
     }
+    
     W25Q32_CS(1);
-    W25Q32_WaitForReady();         // 等待写入完成
+    
+    // 等待写入完成
+    if (W25Q32_WaitForReady() != W25Q32_OK) {
+        return W25Q32_ERROR;
+    }
 
     W25Q32_WriteDisable();
+    return W25Q32_OK;
 }
 
 /******************************************************************************

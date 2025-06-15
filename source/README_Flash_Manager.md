@@ -72,15 +72,15 @@ flash_result_t flash_manager_init(flash_manager_t* manager);
 ### 数据操作
 ```c
 // 写入数据
-flash_result_t flash_write_data(flash_manager_t* manager, uint32_t data_id, 
-                               const uint8_t* data, uint32_t size);
+flash_result_t flash_write_data(flash_manager_t* manager, uint16_t data_id, 
+                               const uint8_t* data, uint8_t size);
 
 // 读取数据
-flash_result_t flash_read_data(flash_manager_t* manager, uint32_t data_id, 
-                              uint8_t* data, uint32_t* size);
+flash_result_t flash_read_data(flash_manager_t* manager, uint16_t data_id, 
+                              uint8_t* data, uint8_t* size);
 
 // 删除数据
-flash_result_t flash_delete_data(flash_manager_t* manager, uint32_t data_id);
+flash_result_t flash_delete_data(flash_manager_t* manager, uint16_t data_id);
 ```
 
 ### 状态查询
@@ -119,11 +119,11 @@ int main(void)
     
     // 写入数据
     uint8_t data[] = "Hello World!";
-    result = flash_write_data(&g_flash_manager, 0x1001, data, sizeof(data));
+    result = flash_write_data(&g_flash_manager, 0x1001, data, (uint8_t)sizeof(data));
     
     // 读取数据
     uint8_t buffer[64];
-    uint32_t size = sizeof(buffer);
+    uint8_t size = sizeof(buffer);
     result = flash_read_data(&g_flash_manager, 0x1001, buffer, &size);
     
     // 获取状态

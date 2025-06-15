@@ -22,8 +22,12 @@
 
 // 数据管理配置
 #define MAX_DATA_ENTRIES        8         // 最大数据条目数
-#define INVALID_DATA_ID         0xFFFFFFFF  // 无效数据ID
+#define INVALID_DATA_ID         0xFFFF    // 无效数据ID (16位)
 #define INVALID_ADDRESS         0xFFFFFFFF  // 无效地址
+
+// Segment头魔法数字定义
+#define SEGMENT_HEADER_MAGIC    0xAB        // Segment头标识魔法数字
+#define DATA_PAGE_MAGIC         0xCD        // 数据页标识魔法数字
 
 // 状态魔法数字定义
 #define SEGMENT_MAGIC_ACTIVE    0x12345678  // 激活状态

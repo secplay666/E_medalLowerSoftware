@@ -20,24 +20,25 @@ typedef enum {
 
 // Segment头结构（256字节）
 typedef struct {
+    uint8_t header_magic;       // Segment头魔法数字 区分数据page
+    uint8_t segment_id;         // Segment ID (0或1)
     uint32_t status_magic;      // 状态魔法数字
-    uint32_t segment_id;        // Segment ID (0或1)
+    uint32_t gc_count;          // 垃圾回收次数
     uint32_t crc32;            // 头部CRC32校验
-    uint8_t  padding[244];      // 填充为0，保持256字节对齐
 } segment_header_t;
 
 // 数据Page结构（256字节）
 typedef struct {
-    uint32_t data_id;          // 数据块ID
-    uint32_t data_size;        // 数据大小（1-240字节）
+    uint16_t data_id;          // 数据块ID
+    uint8_t  data_size;        // 数据大小（1-240字节）
+    uint8_t  reserved;         // 保留字段
     uint32_t crc32;           // 数据CRC32校验
-    uint8_t  reserved[4];      // 保留字段
-    uint8_t  data[240];       // 实际数据
+    uint8_t  data[248];       // 实际数据
 } data_page_t;
 
 // 数据条目映射
 typedef struct {
-    uint32_t data_id;          // 数据ID
+    uint16_t data_id;          // 数据ID
     uint32_t page_address;     // 对应的page地址
 } data_entry_t;
 
@@ -67,10 +68,10 @@ flash_result_t flash_manager_init(flash_manager_t* manager);
  * @param manager Flash管理器指针
  * @param data_id 数据ID
  * @param data 数据指针
- * @param size 数据大小（1-240字节）
+ * @param size 数据大小（1-248字节）
  * @return flash_result_t 操作结果
  */
-flash_result_t flash_write_data(flash_manager_t* manager, uint32_t data_id, const uint8_t* data, uint32_t size);
+flash_result_t flash_write_data(flash_manager_t* manager, uint16_t data_id, const uint8_t* data, uint8_t size);
 
 /**
  * @brief 读取数据
@@ -80,7 +81,7 @@ flash_result_t flash_write_data(flash_manager_t* manager, uint32_t data_id, cons
  * @param size 输入：缓冲区大小，输出：实际数据大小
  * @return flash_result_t 操作结果
  */
-flash_result_t flash_read_data(flash_manager_t* manager, uint32_t data_id, uint8_t* data, uint32_t* size);
+flash_result_t flash_read_data(flash_manager_t* manager, uint16_t data_id, uint8_t* data, uint8_t* size);
 
 /**
  * @brief 删除数据
@@ -88,7 +89,7 @@ flash_result_t flash_read_data(flash_manager_t* manager, uint32_t data_id, uint8
  * @param data_id 数据ID
  * @return flash_result_t 操作结果
  */
-flash_result_t flash_delete_data(flash_manager_t* manager, uint32_t data_id);
+flash_result_t flash_delete_data(flash_manager_t* manager, uint16_t data_id);
 
 /**
  * @brief 执行垃圾回收

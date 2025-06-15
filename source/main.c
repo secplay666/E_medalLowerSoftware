@@ -423,13 +423,13 @@ int32_t main(void)
         
         // 测试写入数据
         uint8_t test_data[] = "Hello Flash Manager!";
-        result = flash_write_data(&g_flash_manager, 0x1001, test_data, sizeof(test_data));
+        result = flash_write_data(&g_flash_manager, 0x1001, test_data, (uint8_t)sizeof(test_data));
         if (result == FLASH_OK) {
             UARTIF_uartPrintf(0, "Test data written successfully!\n");
             
             // 测试读取数据
             uint8_t read_buffer[64];
-            uint32_t read_size = sizeof(read_buffer);
+            uint8_t read_size = sizeof(read_buffer);
             result = flash_read_data(&g_flash_manager, 0x1001, read_buffer, &read_size);
             if (result == FLASH_OK) {
                 UARTIF_uartPrintf(0, "Test data read successfully: %s\n", read_buffer);

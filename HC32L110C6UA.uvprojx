@@ -485,6 +485,11 @@
               <FileType>1</FileType>
               <FilePath>.\source\w25q32.c</FilePath>
             </File>
+            <File>
+              <FileName>flash_manager.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\source\flash_manager.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

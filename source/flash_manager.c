@@ -7,11 +7,13 @@ static uint32_t calculate_crc32(const uint8_t* data, uint32_t length);
 static flash_result_t read_segment_header(uint32_t segment_base, segment_header_t* header);
 static flash_result_t write_segment_header(uint32_t segment_base, const segment_header_t* header);
 static flash_result_t scan_segment_pages(flash_manager_t* manager, uint32_t segment_base);
-static int16_t find_data_entry(flash_manager_t* manager, uint32_t data_id);
-static flash_result_t add_data_entry(flash_manager_t* manager, uint32_t data_id, uint32_t page_address);
-static flash_result_t remove_data_entry(flash_manager_t* manager, uint32_t data_id);
+static int16_t find_data_entry(flash_manager_t* manager, uint16_t data_id);
+static flash_result_t add_data_entry(flash_manager_t* manager, uint16_t data_id, uint32_t page_address);
+static flash_result_t remove_data_entry(flash_manager_t* manager, uint16_t data_id);
 static flash_result_t erase_segment(uint32_t segment_base);
 static flash_result_t copy_valid_pages(flash_manager_t* manager);
+ 
+static uint8_t buffer[256];
 
 /**
  * @brief 计算CRC32校验值
@@ -44,8 +46,13 @@ static flash_result_t read_segment_header(uint32_t segment_base, segment_header_
         return FLASH_ERROR_READ_FAIL;
     }
     
-    // 验证CRC32
-    uint32_t calculated_crc = calculate_crc32((uint8_t*)header, sizeof(segment_header_t) - 4);
+    // 验证头魔法数字
+    if (header->header_magic != SEGMENT_HEADER_MAGIC) {
+        return FLASH_ERROR_CRC_FAIL;
+    }
+    
+    // 验证CRC32 - 只校验有效部分（不包括padding和crc32字段）
+    uint32_t calculated_crc = calculate_crc32((uint8_t*)header, 14); // header_magic(1) + segment_id(1) + status_magic(4) + gc_count(4) + crc32(4) = 14字节有效数据
     if (calculated_crc != header->crc32) {
         return FLASH_ERROR_CRC_FAIL;
     }
@@ -59,10 +66,16 @@ static flash_result_t read_segment_header(uint32_t segment_base, segment_header_
 static flash_result_t write_segment_header(uint32_t segment_base, const segment_header_t* header)
 {
     segment_header_t temp_header;
-    memcpy(&temp_header, header, sizeof(segment_header_t));
+    memset(&temp_header, 0, sizeof(segment_header_t));
     
-    // 计算CRC32
-    temp_header.crc32 = calculate_crc32((uint8_t*)&temp_header, sizeof(segment_header_t) - 4);
+    // 复制有效字段
+    temp_header.header_magic = SEGMENT_HEADER_MAGIC;
+    temp_header.segment_id = header->segment_id;
+    temp_header.status_magic = header->status_magic;
+    temp_header.gc_count = header->gc_count;
+    
+    // 计算CRC32 - 只计算有效部分（不包括padding和crc32字段）
+    temp_header.crc32 = calculate_crc32((uint8_t*)&temp_header, 10); // header_magic(1) + segment_id(1) + status_magic(4) + gc_count(4) = 10字节有效数据
     
     // 擦除第一个扇区
     if (W25Q32_EraseSector(segment_base) != 0) {
@@ -128,7 +141,7 @@ static flash_result_t scan_segment_pages(flash_manager_t* manager, uint32_t segm
 /**
  * @brief 在映射表中查找数据条目
  */
-static int16_t find_data_entry(flash_manager_t* manager, uint32_t data_id)
+static int16_t find_data_entry(flash_manager_t* manager, uint16_t data_id)
 {
     uint16_t i;
     
@@ -144,7 +157,7 @@ static int16_t find_data_entry(flash_manager_t* manager, uint32_t data_id)
 /**
  * @brief 添加数据条目到映射表
  */
-static flash_result_t add_data_entry(flash_manager_t* manager, uint32_t data_id, uint32_t page_address)
+static flash_result_t add_data_entry(flash_manager_t* manager, uint16_t data_id, uint32_t page_address)
 {
     if (manager->data_count >= MAX_DATA_ENTRIES) {
         return FLASH_ERROR_NO_SPACE;
@@ -167,7 +180,7 @@ static flash_result_t add_data_entry(flash_manager_t* manager, uint32_t data_id,
 /**
  * @brief 从映射表中移除数据条目
  */
-static flash_result_t remove_data_entry(flash_manager_t* manager, uint32_t data_id)
+static flash_result_t remove_data_entry(flash_manager_t* manager, uint16_t data_id)
 {
     int16_t index = find_data_entry(manager, data_id);
     if (index < 0) {
@@ -284,9 +297,10 @@ flash_result_t flash_manager_init(flash_manager_t* manager)
     } else {
         // 都是未初始化状态，初始化segment0为激活
         segment_header_t init_header;
+        memset(&init_header, 0, sizeof(segment_header_t));
         init_header.status_magic = SEGMENT_MAGIC_ACTIVE;
         init_header.segment_id = 0;
-        memset(init_header.padding, 0, sizeof(init_header.padding));
+        init_header.gc_count = 0;
         
         result = write_segment_header(FLASH_SEGMENT0_BASE, &init_header);
         if (result != FLASH_OK) {
@@ -306,12 +320,12 @@ flash_result_t flash_manager_init(flash_manager_t* manager)
 /**
  * @brief 写入数据
  */
-flash_result_t flash_write_data(flash_manager_t* manager, uint32_t data_id, const uint8_t* data, uint32_t size)
+flash_result_t flash_write_data(flash_manager_t* manager, uint16_t data_id, const uint8_t* data, uint8_t size)
 {
     data_page_t page;
     flash_result_t result;
     
-    if (manager == NULL || data == NULL || size == 0 || size > 240 || data_id == INVALID_DATA_ID) {
+    if (manager == NULL || data == NULL || size == 0 || size > 248 || data_id == INVALID_DATA_ID) {
         return FLASH_ERROR_INVALID_PARAM;
     }
     
@@ -356,7 +370,7 @@ flash_result_t flash_write_data(flash_manager_t* manager, uint32_t data_id, cons
 /**
  * @brief 读取数据
  */
-flash_result_t flash_read_data(flash_manager_t* manager, uint32_t data_id, uint8_t* data, uint32_t* size)
+flash_result_t flash_read_data(flash_manager_t* manager, uint16_t data_id, uint8_t* data, uint8_t* size)
 {
     data_page_t page;
     int16_t index;
@@ -398,7 +412,7 @@ flash_result_t flash_read_data(flash_manager_t* manager, uint32_t data_id, uint8
 /**
  * @brief 删除数据
  */
-flash_result_t flash_delete_data(flash_manager_t* manager, uint32_t data_id)
+flash_result_t flash_delete_data(flash_manager_t* manager, uint16_t data_id)
 {
     if (manager == NULL || data_id == INVALID_DATA_ID) {
         return FLASH_ERROR_INVALID_PARAM;
@@ -422,9 +436,10 @@ flash_result_t flash_garbage_collect(flash_manager_t* manager)
     manager->gc_in_progress = 1;
     
     // 1. 将备用segment标记为垃圾回收中
+    memset(&header, 0, sizeof(segment_header_t));
     header.status_magic = SEGMENT_MAGIC_GC;
     header.segment_id = (manager->backup_segment_base == FLASH_SEGMENT0_BASE) ? 0 : 1;
-    memset(header.padding, 0, sizeof(header.padding));
+    header.gc_count = 0; // 垃圾回收计数将在完成后更新
     
     result = write_segment_header(manager->backup_segment_base, &header);
     if (result != FLASH_OK) {
@@ -447,8 +462,10 @@ flash_result_t flash_garbage_collect(flash_manager_t* manager)
     }
     
     // 4. 将原激活segment标记为备用
+    memset(&header, 0, sizeof(segment_header_t));
     header.status_magic = SEGMENT_MAGIC_BACKUP;
     header.segment_id = (manager->active_segment_base == FLASH_SEGMENT0_BASE) ? 0 : 1;
+    header.gc_count = 0;
     
     result = write_segment_header(manager->active_segment_base, &header);
     if (result != FLASH_OK) {
@@ -456,9 +473,16 @@ flash_result_t flash_garbage_collect(flash_manager_t* manager)
         return result;
     }
     
-    // 5. 将新segment标记为激活
+    // 5. 读取当前激活segment的gc_count并递增
+    segment_header_t active_header;
+    result = read_segment_header(manager->active_segment_base, &active_header);
+    uint32_t new_gc_count = (result == FLASH_OK) ? active_header.gc_count + 1 : 1;
+    
+    // 将新segment标记为激活
+    memset(&header, 0, sizeof(segment_header_t));
     header.status_magic = SEGMENT_MAGIC_ACTIVE;
     header.segment_id = (manager->backup_segment_base == FLASH_SEGMENT0_BASE) ? 0 : 1;
+    header.gc_count = new_gc_count;
     
     result = write_segment_header(manager->backup_segment_base, &header);
     if (result != FLASH_OK) {

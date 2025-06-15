@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 
+/* 返回值宏定义 */
+#define W25Q32_OK       0    // 操作成功
+#define W25Q32_ERROR    1    // 操作失败
+
 /* 硬件配置 */
 #define W25Q32_CS_PIN       GPIO_PIN_4
 #define W25Q32_CS_PORT      GPIOA
@@ -26,15 +30,15 @@
 #define W25Q32_TOTAL_SIZE        4194304 // 总容量 (4MB)
 
 /* 函数声明 */
-void W25Q32_Init(void);
+uint8_t W25Q32_Init(void);
 void W25Q32_CS(uint8_t state);  // 片选控制
 uint8_t W25Q32_ReadStatusReg(void);
-void W25Q32_WriteEnable(void);
-void W25Q32_WaitForReady(void);
+uint8_t W25Q32_WriteEnable(void);
+uint8_t W25Q32_WaitForReady(void);
 uint32_t W25Q32_ReadID(void);
-void W25Q32_EraseSector(uint32_t sectorAddr);
-void W25Q32_EraseChip(void);
-void W25Q32_ReadData(uint32_t addr, uint8_t *buf, uint32_t len);
-void W25Q32_WritePage(uint32_t addr, uint8_t *buf, uint16_t len);
+uint8_t W25Q32_EraseSector(uint32_t sectorAddr);
+uint8_t W25Q32_EraseChip(void);
+uint8_t W25Q32_ReadData(uint32_t addr, uint8_t *buf, uint32_t len);
+uint8_t W25Q32_WritePage(uint32_t addr, uint8_t *buf, uint16_t len);
 
 #endif

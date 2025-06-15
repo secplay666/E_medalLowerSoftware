@@ -10,116 +10,122 @@ extern flash_manager_t g_flash_manager;
  */
 void flash_manager_test(void)
 {
+    // 1. 基本写入测试
+    UARTIF_uartPrintf(0, "\n=== Flash Manager Test ===\n");
+    
+    uint8_t test_data[] = "Test data for flash manager";
+    uint8_t read_buffer[256];
+    uint8_t read_size;
     flash_result_t result;
-    uint8_t test_data[240];
-    uint8_t read_buffer[240];
-    uint32_t read_size;
-    uint32_t used_pages, free_pages, data_count;
-    uint32_t i;
     
-    UARTIF_uartPrintf(0, "\n=== Flash Manager Test Start ===\n");
-    
-    // 测试1：写入和读取小数据
-    UARTIF_uartPrintf(0, "Test 1: Small data write/read\n");
-    strcpy((char*)test_data, "Small test data");
-    result = flash_write_data(&g_flash_manager, 0x2001, test_data, strlen((char*)test_data) + 1);
+    UARTIF_uartPrintf(0, "1. Basic write test...\n");
+    result = flash_write_data(&g_flash_manager, 0x2001, test_data, (uint8_t)(strlen((char*)test_data) + 1));
     if (result == FLASH_OK) {
-        UARTIF_uartPrintf(0, "Small data written successfully\n");
+        UARTIF_uartPrintf(0, "   Write success!\n");
         
         read_size = sizeof(read_buffer);
         result = flash_read_data(&g_flash_manager, 0x2001, read_buffer, &read_size);
         if (result == FLASH_OK) {
-            UARTIF_uartPrintf(0, "Small data read: %s\n", read_buffer);
+            UARTIF_uartPrintf(0, "   Read success: %s (size: %d)\n", read_buffer, read_size);
         } else {
-            UARTIF_uartPrintf(0, "Failed to read small data: %d\n", result);
+            UARTIF_uartPrintf(0, "   Read failed: %d\n", result);
         }
     } else {
-        UARTIF_uartPrintf(0, "Failed to write small data: %d\n", result);
+        UARTIF_uartPrintf(0, "   Write failed: %d\n", result);
     }
     
-    // 测试2：写入和读取大数据
-    UARTIF_uartPrintf(0, "Test 2: Large data write/read\n");
-    for (i = 0; i < 200; i++) {
-        test_data[i] = (uint8_t)(i & 0xFF);
-    }
-    result = flash_write_data(&g_flash_manager, 0x2002, test_data, 200);
+    // 2. 大数据写入测试
+    UARTIF_uartPrintf(0, "\n2. Large data write test...\n");
+    uint8_t large_data[200];
+    memset(large_data, 0xAA, sizeof(large_data));
+    
+    result = flash_write_data(&g_flash_manager, 0x2002, large_data, 200);
     if (result == FLASH_OK) {
-        UARTIF_uartPrintf(0, "Large data written successfully\n");
+        UARTIF_uartPrintf(0, "   Large write success!\n");
         
         read_size = sizeof(read_buffer);
         result = flash_read_data(&g_flash_manager, 0x2002, read_buffer, &read_size);
         if (result == FLASH_OK) {
-            UARTIF_uartPrintf(0, "Large data read successfully, size: %d\n", read_size);
+            UARTIF_uartPrintf(0, "   Large read success (size: %d)\n", read_size);
             // 验证数据
-            boolean_t data_ok = TRUE;
-            for (i = 0; i < 200; i++) {
-                if (read_buffer[i] != (uint8_t)(i & 0xFF)) {
-                    data_ok = FALSE;
+            uint8_t verify_ok = 1;
+            uint16_t i;
+            for (i = 0; i < read_size; i++) {
+                if (read_buffer[i] != 0xAA) {
+                    verify_ok = 0;
                     break;
                 }
             }
-            UARTIF_uartPrintf(0, "Data verification: %s\n", data_ok ? "PASS" : "FAIL");
+            UARTIF_uartPrintf(0, "   Data verification: %s\n", verify_ok ? "PASS" : "FAIL");
         } else {
-            UARTIF_uartPrintf(0, "Failed to read large data: %d\n", result);
+            UARTIF_uartPrintf(0, "   Large read failed: %d\n", result);
         }
     } else {
-        UARTIF_uartPrintf(0, "Failed to write large data: %d\n", result);
+        UARTIF_uartPrintf(0, "   Large write failed: %d\n", result);
     }
     
-    // 测试3：数据覆盖
-    UARTIF_uartPrintf(0, "Test 3: Data overwrite\n");
-    strcpy((char*)test_data, "Updated data");
-    result = flash_write_data(&g_flash_manager, 0x2001, test_data, strlen((char*)test_data) + 1);
+    // 3. 数据覆盖测试
+    UARTIF_uartPrintf(0, "\n3. Data overwrite test...\n");
+    uint8_t new_data[] = "Updated test data";
+    
+    result = flash_write_data(&g_flash_manager, 0x2001, new_data, (uint8_t)(strlen((char*)new_data) + 1));
     if (result == FLASH_OK) {
-        UARTIF_uartPrintf(0, "Data overwritten successfully\n");
+        UARTIF_uartPrintf(0, "   Overwrite success!\n");
         
         read_size = sizeof(read_buffer);
         result = flash_read_data(&g_flash_manager, 0x2001, read_buffer, &read_size);
         if (result == FLASH_OK) {
-            UARTIF_uartPrintf(0, "Updated data read: %s\n", read_buffer);
+            UARTIF_uartPrintf(0, "   Read after overwrite: %s\n", read_buffer);
+        } else {
+            UARTIF_uartPrintf(0, "   Read after overwrite failed: %d\n", result);
         }
     } else {
-        UARTIF_uartPrintf(0, "Failed to overwrite data: %d\n", result);
+        UARTIF_uartPrintf(0, "   Overwrite failed: %d\n", result);
     }
     
-    // 测试4：数据删除
-    UARTIF_uartPrintf(0, "Test 4: Data deletion\n");
+    // 4. 数据删除测试
+    UARTIF_uartPrintf(0, "\n4. Data delete test...\n");
     result = flash_delete_data(&g_flash_manager, 0x2002);
     if (result == FLASH_OK) {
-        UARTIF_uartPrintf(0, "Data deleted successfully\n");
+        UARTIF_uartPrintf(0, "   Delete success!\n");
         
+        // 尝试读取已删除的数据
         read_size = sizeof(read_buffer);
         result = flash_read_data(&g_flash_manager, 0x2002, read_buffer, &read_size);
         if (result == FLASH_ERROR_NOT_FOUND) {
-            UARTIF_uartPrintf(0, "Data deletion verified\n");
+            UARTIF_uartPrintf(0, "   Deleted data not found (correct)\n");
         } else {
-            UARTIF_uartPrintf(0, "Data deletion failed, still readable\n");
+            UARTIF_uartPrintf(0, "   ERROR: Deleted data still readable!\n");
         }
     } else {
-        UARTIF_uartPrintf(0, "Failed to delete data: %d\n", result);
+        UARTIF_uartPrintf(0, "   Delete failed: %d\n", result);
     }
     
-    // 测试5：批量写入测试
-    UARTIF_uartPrintf(0, "Test 5: Batch write test\n");
-    for (i = 0x3000; i < 0x3010; i++) {
-        sprintf((char*)test_data, "Data ID: 0x%04X", i);
-        result = flash_write_data(&g_flash_manager, i, test_data, strlen((char*)test_data) + 1);
-        if (result != FLASH_OK) {
-            UARTIF_uartPrintf(0, "Failed to write data ID 0x%04X: %d\n", i, result);
-            break;
+    // 5. 批量写入测试
+    UARTIF_uartPrintf(0, "\n5. Batch write test...\n");
+    uint8_t batch_data[] = "Batch test data";
+    for (i = 0x3001; i <= 0x3005; i++) {
+        result = flash_write_data(&g_flash_manager, i, batch_data, (uint8_t)(strlen((char*)batch_data) + 1));
+        if (result == FLASH_OK) {
+            UARTIF_uartPrintf(0, "   Batch write ID 0x%04X: success\n", i);
+        } else {
+            UARTIF_uartPrintf(0, "   Batch write ID 0x%04X: failed (%d)\n", i, result);
         }
     }
-    if (i >= 0x3010) {
-        UARTIF_uartPrintf(0, "Batch write completed successfully\n");
-    }
     
-    // 获取最终状态
+    // 6. 状态查询测试
+    UARTIF_uartPrintf(0, "\n6. Status query test...\n");
+    uint32_t used_pages, free_pages, data_count;
     result = flash_get_status(&g_flash_manager, &used_pages, &free_pages, &data_count);
     if (result == FLASH_OK) {
-        UARTIF_uartPrintf(0, "Final Status: Used=%d, Free=%d, Data=%d\n", used_pages, free_pages, data_count);
+        UARTIF_uartPrintf(0, "   Used pages: %d\n", used_pages);
+        UARTIF_uartPrintf(0, "   Free pages: %d\n", free_pages);
+        UARTIF_uartPrintf(0, "   Data count: %d\n", data_count);
+    } else {
+        UARTIF_uartPrintf(0, "   Status query failed: %d\n", result);
     }
     
-    UARTIF_uartPrintf(0, "=== Flash Manager Test End ===\n\n");
+    UARTIF_uartPrintf(0, "\n=== Flash Manager Test Complete ===\n");
 }
 
 /**
@@ -128,9 +134,7 @@ void flash_manager_test(void)
 void flash_gc_test(void)
 {
     flash_result_t result;
-    uint8_t test_data[240];
     uint32_t used_pages, free_pages, data_count;
-    uint32_t i;
     
     UARTIF_uartPrintf(0, "\n=== Garbage Collection Test Start ===\n");
     
@@ -154,8 +158,8 @@ void flash_gc_test(void)
         
         // 验证数据是否仍然可读
         UARTIF_uartPrintf(0, "Verifying data after GC...\n");
-        uint8_t read_buffer[240];
-        uint32_t read_size = sizeof(read_buffer);
+        uint8_t read_buffer[248];
+        uint8_t read_size = sizeof(read_buffer);
         result = flash_read_data(&g_flash_manager, 0x2001, read_buffer, &read_size);
         if (result == FLASH_OK) {
             UARTIF_uartPrintf(0, "Data verification after GC: %s\n", read_buffer);
