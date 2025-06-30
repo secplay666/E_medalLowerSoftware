@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASCII Converter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        label {
+            display: block;
+            margin-top: 10px;
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            margin-top: 5px;
+        }
+        select, button {
+            margin-top: 10px;
+        }
+        #charCount {
+            margin-top: 10px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>ASCII Converter</h1>
+
+    <label for="textInput">Input String:</label>
+    <textarea id="textInput" placeholder="Enter a string..."></textarea>
+
+    <label for="asciiInput">Input ASCII:</label>
+    <textarea id="asciiInput" placeholder="Enter ASCII codes..."></textarea>
+
+    <label for="format">Select Output Format:</label>
+    <select id="format">
+        <option value="none">No Separator, Hexadecimal</option>
+        <option value="space">Space Separator, Hexadecimal</option>
+        <option value="comma">Comma and Space Separator with 0x Prefix</option>
+    </select>
+
+    <button id="convertButton">Convert</button>
+    <button id="clearButton">Clear</button>
+
+    <div id="charCount">Character Count: 0</div>
+
+    <script>
+        const textInput = document.getElementById('textInput');
+        const asciiInput = document.getElementById('asciiInput');
+        const formatSelect = document.getElementById('format');
+        const convertButton = document.getElementById('convertButton');
+        const clearButton = document.getElementById('clearButton');
+        const charCount = document.getElementById('charCount');
+
+        function updateCharCount() {
+            const count = textInput.value.length || asciiInput.value.split(/\s|,/).filter(Boolean).length;
+            charCount.textContent = `Character Count: ${count}`;
+        }
+
+        convertButton.addEventListener('click', () => {
+            if (textInput.value) {
+                // Convert string to ASCII codes
+                const asciiCodes = Array.from(textInput.value).map(char => char.charCodeAt(0).toString(16).toUpperCase());
+                const format = formatSelect.value;
+
+                let formattedOutput;
+                if (format === 'none') {
+                    formattedOutput = asciiCodes.join('');
+                } else if (format === 'space') {
+                    formattedOutput = asciiCodes.join(' ');
+                } else if (format === 'comma') {
+                    formattedOutput = asciiCodes.map(code => `0x${code}`).join(', ');
+                }
+
+                asciiInput.value = formattedOutput;
+            } else if (asciiInput.value) {
+                // Convert ASCII codes to string
+                const asciiCodes = asciiInput.value.match(/0x[0-9A-F]+|[0-9A-F]+/gi);
+                if (!asciiCodes) return;
+
+                const chars = asciiCodes.map(code => {
+                    const cleanCode = code.replace(/^0x/, '');
+                    return String.fromCharCode(parseInt(cleanCode, 16));
+                });
+
+                textInput.value = chars.join('');
+            }
+
+            updateCharCount();
+        });
+
+        clearButton.addEventListener('click', () => {
+            textInput.value = '';
+            asciiInput.value = '';
+            updateCharCount();
+        });
+
+        textInput.addEventListener('input', updateCharCount);
+        asciiInput.addEventListener('input', updateCharCount);
+    </script>
+</body>
+</html>

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>串口调试工具</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        textarea {
+            width: 100%;
+            flex: 1;
+            margin: 0;
+            box-sizing: border-box;
+            resize: none;
+        }
+        .settings {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        .settings label {
+            margin-right: 10px;
+        }
+        .settings select {
+            margin-right: 20px;
+        }
+        .buttons {
+            display: flex;
+            justify-content: flex-start;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        button {
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>串口调试工具</h1>
+
+    <div class="settings">
+        <label for="baudRate">波特率:</label>
+        <select id="baudRate">
+            <option value="2400">2400</option>
+            <option value="4800">4800</option>
+            <option value="9600">9600</option>
+            <option value="19200">19200</option>
+            <option value="38400">38400</option>
+            <option value="57600">57600</option>
+            <option value="115200">115200</option>
+        </select>
+
+        <label for="dataBits">数据长度:</label>
+        <select id="dataBits">
+            <option value="7">7</option>
+            <option value="8" selected>8</option>
+        </select>
+
+        <label for="parity">校验位:</label>
+        <select id="parity">
+            <option value="none" selected>None</option>
+            <option value="even">Even</option>
+            <option value="odd">Odd</option>
+        </select>
+
+        <label for="stopBits">停止位:</label>
+        <select id="stopBits">
+            <option value="1" selected>1</option>
+            <option value="2">2</option>
+        </select>
+
+        <label for="displayMode">显示模式:</label>
+        <select id="displayMode">
+            <option value="text" selected>文本</option>
+            <option value="hex">16进制</option>
+        </select>
+
+        <label for="timestamp">显示时间戳:</label>
+        <input type="checkbox" id="timestamp">
+
+        <label for="rtsControl">RTS控制:</label>
+        <input type="radio" id="rtsLow" name="rts" value="0" disabled>
+        <label for="rtsLow">0</label>
+        <input type="radio" id="rtsHigh" name="rts" value="1" disabled>
+        <label for="rtsHigh">1</label>
+    </div>
+
+    <div class="buttons">
+        <button id="connectButton">连接串口</button>
+        <button id="disconnectButton" disabled>断开连接</button>
+        <button id="clearButton">清空数据</button>
+        <button id="saveButton">保存接收数据</button>
+    </div>
+
+    <textarea id="outputArea" placeholder="接收的数据将显示在此处..." readonly></textarea>
+    <textarea id="inputArea" placeholder="在此输入要发送的数据..."></textarea>
+    <div class="buttons">
+        <button id="sendButton" disabled>发送数据</button>
+    </div>
+
+    <script>
+        let port;
+        let reader;
+        let outputArea = document.getElementById('outputArea');
+        let inputArea = document.getElementById('inputArea');
+        let connectButton = document.getElementById('connectButton');
+        let disconnectButton = document.getElementById('disconnectButton');
+        let sendButton = document.getElementById('sendButton');
+        let clearButton = document.getElementById('clearButton');
+        let saveButton = document.getElementById('saveButton');
+
+        let rtsLowRadio = document.getElementById('rtsLow');
+        let rtsHighRadio = document.getElementById('rtsHigh');
+
+        let displayModeSelect = document.getElementById('displayMode');
+        let timestampCheckbox = document.getElementById('timestamp');
+
+        let baudRateSelect = document.getElementById('baudRate');
+        let dataBitsSelect = document.getElementById('dataBits');
+        let paritySelect = document.getElementById('parity');
+        let stopBitsSelect = document.getElementById('stopBits');
+
+        connectButton.addEventListener('click', async () => {
+            try {
+                port = await navigator.serial.requestPort();
+                const baudRate = parseInt(baudRateSelect.value);
+                const dataBits = parseInt(dataBitsSelect.value);
+                const parity = paritySelect.value;
+                const stopBits = parseInt(stopBitsSelect.value);
+
+                await port.open({ baudRate, dataBits, parity, stopBits });
+
+                connectButton.disabled = true;
+                disconnectButton.disabled = false;
+                sendButton.disabled = false;
+                rtsLowRadio.disabled = false;
+                rtsHighRadio.disabled = false;
+
+                reader = port.readable.getReader();
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    if (value) {
+                        let receivedData = new TextDecoder().decode(value);
+
+                        if (displayModeSelect.value === 'hex') {
+                            receivedData = Array.from(new Uint8Array(value)).map(byte => byte.toString(16).padStart(2, '0')).join(' ');
+                        }
+
+                        if (displayModeSelect.value === 'text' && timestampCheckbox.checked) {
+                            const now = new Date();
+                            const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}.${String(now.getMilliseconds()).padStart(3, '0')}`;
+                            receivedData = `[${timestamp}] ${receivedData}\n`;
+                        }
+
+                        outputArea.value += receivedData;
+                        outputArea.scrollTop = outputArea.scrollHeight;
+                    }
+                }
+            } catch (err) {
+                console.error('连接失败:', err);
+                alert('连接失败，请确保设备已插入并选择正确的串口。');
+            }
+        });
+
+        disconnectButton.addEventListener('click', async () => {
+            try {
+                if (reader) reader.releaseLock();
+                if (port) await port.close();
+
+                connectButton.disabled = false;
+                disconnectButton.disabled = true;
+                sendButton.disabled = true;
+                rtsLowRadio.disabled = true;
+                rtsHighRadio.disabled = true;
+            } catch (err) {
+                console.error('断开连接失败:', err);
+            }
+        });
+
+        sendButton.addEventListener('click', async () => {
+            try {
+                const writer = port.writable.getWriter();
+                const data = new TextEncoder().encode(inputArea.value);
+                await writer.write(data);
+                writer.releaseLock();
+            } catch (err) {
+                console.error('发送失败:', err);
+            }
+        });
+
+        rtsLowRadio.addEventListener('change', async () => {
+            try {
+                if (rtsLowRadio.checked && port.setSignals) {
+                    console.log('Setting RTS to 0');
+                    await port.setSignals({ requestToSend: true });
+                } else {
+                    console.error('RTS control not supported or port not open.');
+                }
+            } catch (err) {
+                console.error('RTS 0 设置失败:', err);
+            }
+        });
+
+        rtsHighRadio.addEventListener('change', async () => {
+            try {
+                if (rtsHighRadio.checked && port.setSignals) {
+                    console.log('Setting RTS to 1');
+                    await port.setSignals({ requestToSend: false });
+                } else {
+                    console.error('RTS control not supported or port not open.');
+                }
+            } catch (err) {
+                console.error('RTS 1 设置失败:', err);
+            }
+        });
+
+        clearButton.addEventListener('click', () => {
+            outputArea.value = '';
+            inputArea.value = '';
+        });
+
+        saveButton.addEventListener('click', () => {
+            const blob = new Blob([outputArea.value], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'received_data.txt';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+    </script>
+</body>
+</html>
