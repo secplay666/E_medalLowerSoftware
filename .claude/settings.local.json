@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk '{print $9, \"\"\"\"(\"\"\"\" $5 \"\"\"\")\"\"\"\"}')",
+      "Bash(for file in source/*.c)",
+      "Bash(do if grep -q $'[\\x80-\\xFF]' \"$file\")",
+      "Bash(then echo \"Non-ASCII found in: $file\")",
+      "Bash(fi)",
+      "Bash(done)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

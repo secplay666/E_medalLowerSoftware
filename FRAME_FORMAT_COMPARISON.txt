@@ -1,0 +1,187 @@
+================================================================================
+              帧格式对比与修复 - 可视化说明
+================================================================================
+
+【上位机发送的实际帧结构】
+
+字节索引    内容        值示例      说明
+─────────────────────────────────────────────────
+0-3        帧头        A5 A5 A5 A5  开始标记
+4          slot_id     00           插槽编号 (0-7)
+5          magic/type  A3           图像类型 (0xA3=BW, 0xA4=Red)
+6          frame_id    00           帧编号 (0-60)
+7          reserved    00           保留字节
+8-11       CRC32       xx xx xx xx  校验值（大端序）
+12-259     payload     ...          图像数据 (248字节)
+260-263    帧尾        5A 5A 5A 5A  结束标记
+─────────────────────────────────────────────────
+总计: 264字节
+
+
+【下位机原来错误的读取方式】
+
+代码行号: image_transfer.c:442-446 (修改前)
+
+    lastImageMagic = rx_buf[4];   // ❌ 错误！读的是slot_id
+    lastSlotId = rx_buf[5];       // ❌ 错误！读的是magic
+    lastFrameNum = rx_buf[6];     // ✓ 正确
+
+结果:
+    lastImageMagic 应该 = 0xA3，但得到 0x00 (slot_id)
+    lastSlotId 应该 = 0x00，但得到 0xA3 (magic)
+    lastFrameNum = 0x00 (正确)
+
+
+【下位机正确的读取方式（修改后）】
+
+代码行号: image_transfer.c:442-446 (修改后)
+
+    lastSlotId = rx_buf[4];       // ✓ 正确！读的是slot_id
+    lastImageMagic = rx_buf[5];   // ✓ 正确！读的是magic
+    lastFrameNum = rx_buf[6];     // ✓ 正确
+
+结果:
+    lastSlotId = 0x00 (正确)
+    lastImageMagic = 0xA3 (正确)
+    lastFrameNum = 0x00 (正确)
+
+
+【验证流程对比】
+
+修改前 (错误的验证):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+读取 lastImageMagic = 0x00
+检查: if (lastImageMagic != MAGIC_BW_IMAGE_DATA)
+      if (0x00 != 0xA3)  → TRUE ❌
+发送错误信号，缓冲不清空
+下一帧接收时缓冲已满
+显示大量 "5A 5A 5A 5A" (帧尾)
+
+
+修改后 (正确的验证):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+读取 lastImageMagic = 0xA3
+检查: if (lastImageMagic != MAGIC_BW_IMAGE_DATA)
+      if (0xA3 != 0xA3)  → FALSE ✓
+继续校验CRC和其他参数
+数据写入Flash
+缓冲清空，准备下一帧
+
+
+【具体的修改行】
+
+文件: source/image_transfer.c
+位置: 第442-446行
+
+修改前:
+───────
+lastImageMagic = rx_buf[4];
+lastSlotId = rx_buf[5];
+lastFrameNum = rx_buf[6];
+
+修改后:
+───────
+lastSlotId = rx_buf[4];        // ← 交换了
+lastImageMagic = rx_buf[5];    // ← 交换了
+lastFrameNum = rx_buf[6];      // ← 保持不变
+
+
+【为什么会收到大量5A 5A 5A 5A？】
+
+时间轴:
+───────
+
+时刻1: 上位机发送 264 字节帧
+       A5 A5 A5 A5 | 00 A3 00 00 | CRC | 数据 | 5A 5A 5A 5A
+
+时刻2: 下位机接收到完整264字节
+
+时刻3: 下位机验证
+       读取 lastImageMagic = rx_buf[4] = 0x00 (错！)
+       检查 if (0x00 != 0xA3) → 触发"Invalid magic"错误
+
+时刻4: 因为是错误帧，缓冲不清空，rx_idx仍 = 264
+
+时刻5: 用户又发送一帧
+       缓冲溢出！前一帧的数据(包括帧尾)混在新数据中
+
+时刻6: 因为溢出，缓冲中充满了乱七八糟的数据
+       其中包括上一帧的帧尾 0x5A5A5A5A
+
+时刻7: 每次IDLE状态调用时都会打印缓冲内容
+       结果就是看到大量重复的 "5A 5A 5A 5A"
+
+
+【修复后的执行流程】
+
+时刻1: 上位机发送 264 字节帧
+       A5 A5 A5 A5 | 00 A3 00 00 | CRC | 数据 | 5A 5A 5A 5A
+
+时刻2: 下位机接收到完整264字节
+
+时刻3: 下位机验证 (修复后)
+       读取 lastSlotId = rx_buf[4] = 0x00 ✓
+       读取 lastImageMagic = rx_buf[5] = 0xA3 ✓
+       检查 if (0xA3 != 0xA3) → FALSE ✓ 通过！
+
+时刻4: CRC校验 ✓
+
+时刻5: 数据写入Flash ✓
+
+时刻6: 清空缓冲，rx_idx = 0 ✓
+
+时刻7: 准备接收下一帧，一切正常 ✓
+
+
+【数据对比示意】
+
+接收到的字节序列:
+───────────────────────────────────
+下标:     0  1  2  3  4  5  6  7  8  9 10 11 12 ...
+内容:    A5 A5 A5 A5 00 A3 00 00 XX XX XX XX YY ...
+含义:    ┌─帧头─┐  └─────元数据─────┘ └─CRC─┘ └─数据
+
+修改前的读取:
+───────────────────────────────────
+lastImageMagic = buf[4] = 0x00   ❌
+lastSlotId     = buf[5] = 0xA3   ❌
+lastFrameNum   = buf[6] = 0x00   ✓
+
+修改后的读取:
+───────────────────────────────────
+lastSlotId     = buf[4] = 0x00   ✓
+lastImageMagic = buf[5] = 0xA3   ✓
+lastFrameNum   = buf[6] = 0x00   ✓
+
+
+【修改检查清单】
+
+[✓] 修改了 lastSlotId = rx_buf[4]
+[✓] 修改了 lastImageMagic = rx_buf[5]
+[✓] 保持 lastFrameNum = rx_buf[6]
+[✓] 添加了格式注释
+[✓] 重新编译无错误
+[✓] 准备上传测试
+
+
+【预期测试结果】
+
+修改前:
+    [IMG_DBG] IDLE: Received 1 new bytes, total=1, rx_idx=1
+    [IMG_DBG] IDLE: Received 1 new bytes, total=2, rx_idx=2
+    ...
+    [IMG_DBG] RX_BUF in IDLE: 5A 5A 5A 5A  ← 看到这个就是错了
+
+修改后:
+    [IMG_DBG] IDLE: Received 4 new bytes, total=4, rx_idx=4
+    [IMG_DBG] Frame 1: Header pos=0, rx_idx=264
+    [IMG_DBG] Parse: magic=0xA3, slot=0, frame=0
+    [IMG_DBG] CRC: rx=..., calc=...
+    [IMG_DBG] Frame 0 saved, frameIsFull=0x0000000000000001
+    ← 看到这个说明修复成功！
+
+
+================================================================================
+                          这是关键修复！
+                     字节位置正确了，一切问题都会解决
+================================================================================

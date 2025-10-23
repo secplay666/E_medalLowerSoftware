@@ -56,6 +56,8 @@
  ******************************************************************************/
 static Queue uartRecdata, lpUartRecdata;
 static uint8_t cmd = 0xff;
+static uint32_t uartRxCount = 0;  // 统计UART接收字节数
+static uint32_t queueOverflowCount = 0;  // 统计队列溢出次数
 
 /******************************************************************************
  * Local pre-processor symbols/macros ('#define')                             
@@ -69,10 +71,17 @@ void UART_rxIntCallback(void)
 {
     volatile char data = 0;
     data = Uart_ReceiveData(UARTCH1);
+    uartRxCount++;
 
-    if (Queue_Enqueue(&uartRecdata, data)) 
+    if (Queue_Enqueue(&uartRecdata, data))
     {
         Uart_ClrStatus(UARTCH1,UartRxFull);
+    }
+    else
+    {
+        // 队列满，数据丢失
+        queueOverflowCount++;
+        // 注：不在中断中输出，避免影响时序
     }
 }
 
@@ -331,10 +340,37 @@ uint16_t UARTIF_fetchDataFromUart(uint8_t *buf, uint16_t *idx)
     while (!Queue_IsEmpty(&uartRecdata))
     {
         Queue_Dequeue(&uartRecdata, &byte);
+        Uart_SendData(UARTCH1, byte);
         buf[(*idx)++] = byte;
         cnt++;
     }
     return cnt;
+}
+
+/**
+ * @brief 获取UART接收统计信息
+ * @param rxCount 指针，返回接收总字节数
+ * @param overflowCount 指针，返回队列溢出次数
+ */
+void UARTIF_getUartStats(uint32_t *rxCount, uint32_t *overflowCount)
+{
+    if (rxCount != NULL)
+    {
+        *rxCount = uartRxCount;
+    }
+    if (overflowCount != NULL)
+    {
+        *overflowCount = queueOverflowCount;
+    }
+}
+
+/**
+ * @brief 重置UART统计信息
+ */
+void UARTIF_resetUartStats(void)
+{
+    uartRxCount = 0;
+    queueOverflowCount = 0;
 }
 
 /******************************************************************************

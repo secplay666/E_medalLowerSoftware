@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define QUEUE_SIZE 128  // 队列的最大大小
+#define QUEUE_SIZE 300  // 队列的最大大小
 
 // 队列结构定义
 typedef struct {

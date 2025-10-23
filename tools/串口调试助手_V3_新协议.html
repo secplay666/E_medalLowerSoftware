@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>串口调试工具 - 新协议V2</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 10px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .panel {
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .section-title {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px;
+            border-radius: 3px;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+        .settings {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+        }
+        .control-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        button {
+            padding: 8px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        button:hover:not(:disabled) {
+            background-color: #45a049;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 12px;
+            box-sizing: border-box;
+            resize: vertical;
+        }
+        .progress-container {
+            width: 100%;
+            height: 30px;
+            background-color: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-bar {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        .info-box {
+            background-color: #e3f2fd;
+            border-left: 4px solid #2196F3;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+        }
+        .error-box {
+            background-color: #ffebee;
+            border-left: 4px solid #f44336;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+            color: #c62828;
+        }
+        .success-box {
+            background-color: #e8f5e9;
+            border-left: 4px solid #4CAF50;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+            color: #2e7d32;
+        }
+        input[type="file"],
+        input[type="number"],
+        select {
+            padding: 6px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        label {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>✨ 串口调试工具 - 新协议V2</h1>
+
+        <!-- 连接设置 -->
+        <div class="panel">
+            <div class="section-title">🔌 串口设置</div>
+            <div class="settings">
+                <div class="control-group">
+                    <label>波特率:</label>
+                    <select id="baudRate">
+                        <option value="9600">9600</option>
+                        <option value="19200">19200</option>
+                        <option value="38400">38400</option>
+                        <option value="57600">57600</option>
+                        <option value="115200" selected>115200</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <button id="connectBtn" onclick="connectSerial()">连接串口</button>
+                    <button id="disconnectBtn" onclick="disconnectSerial()" disabled>断开连接</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 图像选择和传输 -->
+        <div class="panel">
+            <div class="section-title">📤 图像传输</div>
+            <div class="settings">
+                <div class="control-group">
+                    <label>选择图像:</label>
+                    <input type="file" id="imageInput" accept="image/*">
+                </div>
+                <div class="control-group">
+                    <button id="previewBtn" onclick="previewImage()" disabled>预览</button>
+                </div>
+                <div class="control-group">
+                    <label>目标Slot:</label>
+                    <input type="number" id="slotId" min="0" max="7" value="0" style="width: 60px;">
+                </div>
+            </div>
+
+            <div id="imageInfo" class="info-box" style="display:none;"></div>
+
+            <div>
+                <canvas id="previewCanvas" width="400" height="300" style="border: 1px solid #ddd; margin: 10px 0;"></canvas>
+            </div>
+
+            <div>
+                <button id="sendBtn" onclick="sendImage()" disabled>开始传输</button>
+                <button id="stopBtn" onclick="stopTransfer()" disabled>停止传输</button>
+                <button id="resetBtn" onclick="resetTransfer()" disabled>重置</button>
+            </div>
+
+            <div class="progress-container">
+                <div class="progress-bar" id="progressBar" style="width: 0%;">0%</div>
+            </div>
+            <div id="statusMsg" class="info-box">等待操作...</div>
+        </div>
+
+        <!-- 日志输出 -->
+        <div class="panel">
+            <div class="section-title">📋 调试日志</div>
+            <textarea id="logArea" readonly></textarea>
+            <div>
+                <button onclick="clearLog()">清空日志</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let port = null;
+        let isConnected = false;
+        let isTransferring = false;
+        let imageData = null;
+
+        const PROTO_START_MARK = 0x55;
+        const PROTO_STOP_MARK = 0xAA;
+        const CMD_START = 0x01;
+        const CMD_END = 0x02;
+        const FRAME_TYPE_IMAGE_HEADER = 0x11;
+        const FRAME_TYPE_IMAGE_DATA = 0x10;
+        const RESP_ACK = 0x20;
+        const RESP_COMPLETE = 0x02;
+
+        const IMAGE_PAGES = 61;
+        const FRAME_PAYLOAD_SIZE = 248;
+        const FRAME_TIMEOUT = 3000;
+        const MAX_RETRIES = 5;
+
+        // 日志记录
+        function log(message) {
+            const logArea = document.getElementById('logArea');
+            const timestamp = new Date().toLocaleTimeString();
+            logArea.value += `[${timestamp}] ${message}\n`;
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('logArea').value = '';
+        }
+
+        function updateStatus(message, type = 'info') {
+            const statusMsg = document.getElementById('statusMsg');
+            const timestamp = new Date().toLocaleTimeString();
+            const icon = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
+            statusMsg.textContent = `${icon} [${timestamp}] ${message}`;
+            statusMsg.className = type === 'error' ? 'error-box' : type === 'success' ? 'success-box' : 'info-box';
+        }
+
+        // 串口操作
+        async function connectSerial() {
+            try {
+                port = await navigator.serial.requestPort();
+                const baudRate = parseInt(document.getElementById('baudRate').value);
+                await port.open({ baudRate, dataBits: 8, parity: 'none', stopBits: 1 });
+                isConnected = true;
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+                document.getElementById('previewBtn').disabled = false;
+                updateStatus('串口已连接', 'success');
+                log('串口连接成功');
+                startReadLoop();
+            } catch (err) {
+                updateStatus('连接失败: ' + err.message, 'error');
+                log('连接失败: ' + err.message);
+            }
+        }
+
+        function disconnectSerial() {
+            if (port) {
+                port.close();
+                isConnected = false;
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = true;
+                updateStatus('串口已断开', 'info');
+                log('串口已断开');
+            }
+        }
+
+        async function startReadLoop() {
+            if (!port || !port.readable) return;
+            const reader = port.readable.getReader();
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    // 数据已接收，硬件会自动处理ACK等响应
+                }
+            } finally {
+                reader.releaseLock();
+            }
+        }
+
+        // 图像处理
+        function previewImage() {
+            const fileInput = document.getElementById('imageInput');
+            if (!fileInput.files.length) {
+                updateStatus('请先选择图像文件', 'error');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    imageData = img;
+                    drawPreview(img);
+                    document.getElementById('sendBtn').disabled = false;
+                    updateStatus('图像已加载: ' + img.width + 'x' + img.height, 'success');
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function drawPreview(img) {
+            const canvas = document.getElementById('previewCanvas');
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 计算缩放比例
+            const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+            const x = (canvas.width - img.width * scale) / 2;
+            const y = (canvas.height - img.height * scale) / 2;
+            ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+        }
+
+        // CRC32计算
+        function calculateCRC32(data) {
+            let crc = 0xFFFFFFFF;
+            for (let i = 0; i < data.length; i++) {
+                crc ^= data[i];
+                for (let j = 0; j < 8; j++) {
+                    if (crc & 1) {
+                        crc = (crc >>> 1) ^ 0xEDB88320;
+                    } else {
+                        crc = crc >>> 1;
+                    }
+                }
+            }
+            return (crc ^ 0xFFFFFFFF) >>> 0;
+        }
+
+        // 校验和计算
+        function calculateChecksum(data) {
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) {
+                sum = (sum + data[i]) & 0xFF;
+            }
+            return sum;
+        }
+
+        // 帧构建
+        function buildControlFrame(command) {
+            const frame = new Uint8Array(4);
+            frame[0] = PROTO_START_MARK;
+            frame[1] = command;
+            frame[2] = calculateChecksum(frame.slice(0, 2));
+            frame[3] = PROTO_STOP_MARK;
+            return frame;
+        }
+
+        function buildDataFrame(frameType, frameNum, slotId, payload) {
+            const frame = new Uint8Array(259);
+            let offset = 0;
+
+            frame[offset++] = PROTO_START_MARK;
+            frame[offset++] = frameType;
+            frame[offset++] = frameNum & 0xFF;
+            frame[offset++] = (frameNum >> 8) & 0xFF;
+            frame[offset++] = slotId;
+
+            // CRC32
+            const crc = calculateCRC32(payload);
+            frame[offset++] = crc & 0xFF;
+            frame[offset++] = (crc >> 8) & 0xFF;
+            frame[offset++] = (crc >> 16) & 0xFF;
+            frame[offset++] = (crc >> 24) & 0xFF;
+
+            // 载荷
+            frame.set(payload, offset);
+            offset += FRAME_PAYLOAD_SIZE;
+
+            // 校验和和尾标记
+            frame[offset++] = calculateChecksum(frame.slice(0, 257));
+            frame[offset++] = PROTO_STOP_MARK;
+
+            return frame;
+        }
+
+        // 图像发送
+        async function sendImage() {
+            if (!isConnected || !imageData) {
+                updateStatus('未准备好', 'error');
+                return;
+            }
+
+            isTransferring = true;
+            document.getElementById('sendBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            document.getElementById('resetBtn').disabled = false;
+
+            try {
+                // 1. 发送START
+                log('发送START命令...');
+                await sendFrame(buildControlFrame(CMD_START));
+                await delay(100);
+
+                // 2. 等待READY
+                log('等待READY响应...');
+                await delay(500);
+
+                // 3. 发送图像头
+                log('发送图像头...');
+                const slotId = parseInt(document.getElementById('slotId').value);
+                const headerPayload = new Uint8Array(FRAME_PAYLOAD_SIZE);
+                headerPayload.fill(0xFF);
+                await sendDataFrameWithRetry(FRAME_TYPE_IMAGE_HEADER, 0, slotId, headerPayload);
+
+                // 4. 发送61帧图像数据
+                log('开始发送图像数据...');
+                const imageBytes = convertImageToBytes(imageData);
+                for (let i = 0; i < IMAGE_PAGES; i++) {
+                    if (!isTransferring) break;
+
+                    const start = i * FRAME_PAYLOAD_SIZE;
+                    const end = Math.min(start + FRAME_PAYLOAD_SIZE, imageBytes.length);
+                    const pageData = new Uint8Array(FRAME_PAYLOAD_SIZE);
+                    pageData.set(imageBytes.slice(start, end));
+                    if (end - start < FRAME_PAYLOAD_SIZE) {
+                        pageData.fill(0xFF, end - start);
+                    }
+
+                    await sendDataFrameWithRetry(FRAME_TYPE_IMAGE_DATA, i, slotId, pageData);
+
+                    const progress = ((i + 1) / IMAGE_PAGES * 100).toFixed(1);
+                    document.getElementById('progressBar').style.width = progress + '%';
+                    document.getElementById('progressBar').textContent = progress + '%';
+                    updateStatus(`传输中... ${progress}%`);
+                }
+
+                // 5. 发送END
+                log('发送END命令...');
+                await sendFrame(buildControlFrame(CMD_END));
+                await delay(500);
+
+                updateStatus('✅ 传输完成！', 'success');
+                log('传输完成');
+
+            } catch (err) {
+                updateStatus('❌ 传输失败: ' + err.message, 'error');
+                log('传输失败: ' + err.message);
+            } finally {
+                isTransferring = false;
+                document.getElementById('sendBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+            }
+        }
+
+        async function sendDataFrameWithRetry(frameType, frameNum, slotId, payload) {
+            for (let retry = 0; retry < MAX_RETRIES; retry++) {
+                const frame = buildDataFrame(frameType, frameNum, slotId, payload);
+                log(`发送帧${frameNum} (尝试${retry + 1}/${MAX_RETRIES})...`);
+                await sendFrame(frame);
+                await delay(50); // 等待响应处理时间
+            }
+        }
+
+        async function sendFrame(frame) {
+            if (!port || !port.writable) {
+                throw new Error('串口未连接');
+            }
+            const writer = port.writable.getWriter();
+            await writer.write(frame);
+            writer.releaseLock();
+        }
+
+        function convertImageToBytes(img) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 400;
+            canvas.height = 300;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, 400, 300);
+
+            const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+            const x = (canvas.width - img.width * scale) / 2;
+            const y = (canvas.height - img.height * scale) / 2;
+            ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+
+            const imageData = ctx.getImageData(0, 0, 400, 300);
+            const data = imageData.data;
+            const bytes = new Uint8Array(400 * 300 / 8);
+
+            let byteIdx = 0;
+            for (let i = 0; i < data.length; i += 32) {
+                let byte = 0;
+                for (let bit = 0; bit < 8 && i + bit * 4 < data.length; bit++) {
+                    if (data[i + bit * 4] > 128) {
+                        byte |= (1 << (7 - bit));
+                    }
+                }
+                bytes[byteIdx++] = byte;
+            }
+
+            return bytes;
+        }
+
+        function stopTransfer() {
+            isTransferring = false;
+            updateStatus('传输已停止', 'info');
+            log('用户停止了传输');
+        }
+
+        function resetTransfer() {
+            imageData = null;
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressBar').textContent = '0%';
+            updateStatus('已重置', 'info');
+            log('已重置');
+        }
+
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // 初始化
+        window.onload = () => {
+            updateStatus('就绪', 'info');
+            log('应用已就绪');
+        };
+    </script>
+</body>
+</html>

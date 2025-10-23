@@ -54,6 +54,12 @@ void ImageTransfer_Init(void);
  */
 void ImageTransfer_Process(void);
 
+/**
+ * @brief Print diagnostic information about image transfer status
+ * @details Outputs current state, buffer status, and statistics
+ */
+void ImageTransfer_PrintDiagnostics(void);
+
 #endif // IMAGE_TRANSFER_H
 
 /******************************************************************************

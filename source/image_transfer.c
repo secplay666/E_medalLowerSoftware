@@ -90,7 +90,16 @@
 #define IMAGE_COMMAND_SUBID_BUSY    0x02
 #define IMAGE_COMMAND_SUBID_INTERNAL 0x03
 
-// #define IMAGE_COMMAND_ID_INTERNAL_ERR 0xBE
+// 调试开关
+#define IMAGE_TRANSFER_DEBUG 1
+
+// 错误子码定义（用于调试）
+#define ERROR_SUBCODE_IDLE_NOT_HEADER       0x10  // IDLE状态收到非帧头
+#define ERROR_SUBCODE_TAIL_MISMATCH         0x11  // 帧尾不匹配
+#define ERROR_SUBCODE_CRC_FAIL              0x12  // CRC校验失败
+#define ERROR_SUBCODE_INVALID_MAGIC         0x13  // 无效的magic
+#define ERROR_SUBCODE_INVALID_SLOT          0x14  // 无效的slot
+#define ERROR_SUBCODE_INVALID_FRAME         0x15  // 无效的frame编号
 /******************************************************************************
  * Global variable definitions (declared in header file with 'extern')
  ******************************************************************************/
@@ -123,11 +132,71 @@ static imageTransferStates state = IMGTRSF_IDLE;
 static uint8_t lastImageMagic = 0xff;
 static uint8_t lastSlotId = 0xff;
 static uint8_t lastFrameNum = 0xff;
+static uint32_t totalBytesReceived = 0;  // 统计接收总字节数
+static uint32_t frameCount = 0;          // 统计帧数
 
 
 /*****************************************************************************
  * Function implementation - local ('static')
  ******************************************************************************/
+
+#if IMAGE_TRANSFER_DEBUG
+/**
+ * @brief 调试输出：打印十六进制数据
+ */
+static void debugPrintHex(const char *prefix, const uint8_t *data, uint16_t len)
+{
+    uint16_t i;
+    UARTIF_uartPrintf(0, "[IMG_DBG] %s: ", prefix);
+    for (i = 0; i < len && i < 32; i++)  // 最多打印32字节
+    {
+        UARTIF_uartPrintf(0, "%02X ", data[i]);
+    }
+    if (len > 32)
+    {
+        UARTIF_uartPrintf(0, "... (total %d bytes)", len);
+    }
+    UARTIF_uartPrintf(0, "\r\n");
+}
+
+/**
+ * @brief 调试输出：打印状态信息
+ */
+static void debugPrint(const char *msg)
+{
+    UARTIF_uartPrintf(0, "[IMG_DBG] %s\r\n", msg);
+}
+#else
+#define debugPrintHex(prefix, data, len)
+#define debugPrint(msg)
+#endif
+
+/**
+ * @brief 在缓冲区中查找帧头位置
+ * @return 帧头位置索引，如果没找到返回-1
+ */
+static int16_t findFrameHeader(const uint8_t *buf, uint16_t len)
+{
+    uint16_t i;
+    uint32_t magic;
+
+    if (len < IMAGE_FRAME_HEAD_SIZE)
+    {
+        return -1;
+    }
+
+    for (i = 0; i <= len - IMAGE_FRAME_HEAD_SIZE; i++)
+    {
+        magic = (buf[i]<<24)|(buf[i+1]<<16)|(buf[i+2]<<8)|buf[i+3];
+        if (magic == IMAGE_FRAME_HEAD_MAGIC)
+        {
+            return (int16_t)i;
+        }
+    }
+
+    return -1;
+}
+
 static void sendCmd(uint8_t *cmd, uint8_t length)
 {
     uint8_t i = 0;
@@ -223,6 +292,14 @@ void ImageTransfer_Init(void)
     lastSlotId = 0xff;
     lastFrameNum = 0xff;
     memset(rx_buf, 0, IMAGE_FRAME_SIZE);
+
+    // 报告当前的传输统计信息
+    UARTIF_uartPrintf(0, "[IMG_DBG] Transfer init. Total frames received=%u, Total bytes=%u\r\n",
+                     frameCount, totalBytesReceived);
+
+    // 重置统计信息用于下一次传输
+    frameCount = 0;
+    totalBytesReceived = 0;
 }
 
 void ImageTransfer_Process(void)
@@ -232,24 +309,82 @@ void ImageTransfer_Process(void)
     uint32_t crcCalc = 0;
     const uint8_t *data = NULL;
     flash_result_t re = FLASH_OK;
+    int16_t headerPos = -1;
+    uint16_t i;
+    uint16_t newBytes = 0;
 
     switch (state)
     {
         case IMGTRSF_IDLE:
             // Handle idle state
-            (void)UARTIF_fetchDataFromUart(rx_buf, &rx_idx);
+            newBytes = UARTIF_fetchDataFromUart(rx_buf, &rx_idx);
+            if (newBytes > 0)
+            {
+                totalBytesReceived += newBytes;
+                UARTIF_uartPrintf(0, "[IMG_DBG] IDLE: Received %d new bytes, total=%u, rx_idx=%d\r\n",
+                                 newBytes, totalBytesReceived, rx_idx);
+            }
+
             if (rx_idx >= IMAGE_FRAME_HEAD_SIZE)
             {
-                magic = (rx_buf[0]<<24)|(rx_buf[1]<<16)|(rx_buf[2]<<8)|rx_buf[3];
-                if (magic == IMAGE_FRAME_HEAD_MAGIC)
+                debugPrintHex("RX_BUF in IDLE", rx_buf, rx_idx < 32 ? rx_idx : 32);
+
+                // 查找帧头位置
+                headerPos = findFrameHeader(rx_buf, rx_idx);
+
+                if (headerPos >= 0)
                 {
+                    debugPrint("Frame header found");
+                    frameCount++;
+                    UARTIF_uartPrintf(0, "[IMG_DBG] Frame %u: Header pos=%d, rx_idx=%d\r\n", frameCount, headerPos, rx_idx);
+
+                    // 如果帧头不在起始位置，需要移动数据
+                    if (headerPos > 0)
+                    {
+                        debugPrint("Shifting buffer to align header");
+                        // 将帧头移到缓冲区开始位置
+                        for (i = 0; i < (rx_idx - headerPos); i++)
+                        {
+                            rx_buf[i] = rx_buf[headerPos + i];
+                        }
+                        rx_idx = rx_idx - headerPos;
+                        debugPrintHex("After shift", rx_buf, rx_idx < 32 ? rx_idx : 32);
+                    }
+
+                    // 切换到接收数据状态
                     state = IMGTRSF_RECEIVING_DATA;
                     timeout_cycle = 0;
                 }
                 else
                 {
-                    sendCmd8(IMAGE_COMMAND_ID_SEQ_ERR, 0xff, 0xff, 0xff, 0xff);
-                    ImageTransfer_Init();
+                    // 没有找到帧头
+                    if (rx_idx >= IMAGE_FRAME_SIZE)
+                    {
+                        // 缓冲区满了还没找到帧头，发送错误并重置
+                        debugPrint("Buffer full, no header found");
+                        UARTIF_uartPrintf(0, "[IMG_DBG] ERROR: Buffer full without header. First 16 bytes: ");
+                        for (i = 0; i < 16 && i < rx_idx; i++)
+                        {
+                            UARTIF_uartPrintf(0, "%02X ", rx_buf[i]);
+                        }
+                        UARTIF_uartPrintf(0, "\r\n");
+                        sendCmd8(IMAGE_COMMAND_ID_SEQ_ERR, ERROR_SUBCODE_IDLE_NOT_HEADER, rx_buf[0], rx_buf[1], rx_buf[2]);
+                        ImageTransfer_Init();
+                    }
+                    else
+                    {
+                        // 保留最后几个字节，防止帧头跨buffer
+                        if (rx_idx > (IMAGE_FRAME_SIZE - IMAGE_FRAME_HEAD_SIZE))
+                        {
+                            UARTIF_uartPrintf(0, "[IMG_DBG] Keep last %d bytes for frame alignment\r\n", IMAGE_FRAME_HEAD_SIZE);
+                            for (i = 0; i < IMAGE_FRAME_HEAD_SIZE; i++)
+                            {
+                                rx_buf[i] = rx_buf[rx_idx - IMAGE_FRAME_HEAD_SIZE + i];
+                            }
+                            rx_idx = IMAGE_FRAME_HEAD_SIZE;
+                        }
+                        checkTimeout();
+                    }
                 }
             }
             else if(rx_idx > 0)
@@ -263,47 +398,96 @@ void ImageTransfer_Process(void)
             break;
         case IMGTRSF_RECEIVING_DATA:
             // Handle receiving data state
-            if (UARTIF_fetchDataFromUart(rx_buf, &rx_idx) > 0u)
+            newBytes = UARTIF_fetchDataFromUart(rx_buf, &rx_idx);
+            if (newBytes > 0u)
             {
                 timeout_cycle = 0; // 有数据则重置超时
+                UARTIF_uartPrintf(0, "[IMG_DBG] RECEIVING: Added %d bytes, total rx_idx=%d/%d\r\n",
+                                 newBytes, rx_idx, IMAGE_FRAME_SIZE);
             }
             else
             {
                 checkTimeout();
             }
+
             if (rx_idx >= IMAGE_FRAME_SIZE)
             {
+                debugPrint("Full frame received");
+                UARTIF_uartPrintf(0, "[IMG_DBG] Frame complete: rx_idx=%d bytes\r\n", rx_idx);
+                debugPrintHex("Frame header+meta", rx_buf, 16);
+
                 // 检查帧尾
                 magic = (rx_buf[IMAGE_FRAME_SIZE-4]<<24)|
                         (rx_buf[IMAGE_FRAME_SIZE-3]<<16)|
                         (rx_buf[IMAGE_FRAME_SIZE-2]<<8)|
                         rx_buf[IMAGE_FRAME_SIZE-1];
+
+                debugPrintHex("Frame tail", &rx_buf[IMAGE_FRAME_SIZE-4], 4);
+
                 if (magic != IMAGE_FRAME_TAIL_MAGIC)
                 {
                     // 帧尾错误，发送NACK
-                    sendCmdNack();
+                    UARTIF_uartPrintf(0, "[IMG_DBG] Tail error! Got 0x%08lX, expected 0x%08lX\r\n",
+                                     magic, IMAGE_FRAME_TAIL_MAGIC);
+                    sendCmd8(IMAGE_COMMAND_ID_SEQ_ERR, ERROR_SUBCODE_TAIL_MISMATCH,
+                            rx_buf[IMAGE_FRAME_SIZE-4], rx_buf[IMAGE_FRAME_SIZE-3], rx_buf[IMAGE_FRAME_SIZE-2]);
                     rx_idx = 0;
                     timeout_cycle = 0;
                     state = IMGTRSF_IDLE;
+                    memset(rx_buf, 0, IMAGE_FRAME_SIZE);
                 }
                 else
                 {
-                    // 解析接收到的帧数据，直接存入 last* 变量
-                    lastImageMagic = rx_buf[4];
-                    lastSlotId = rx_buf[5];
-                    lastFrameNum = rx_buf[6];
-                    // rx_buf[7]; // reserved
+                    // 解析接收到的帧数据
+                    // 帧格式: [帧头4] [slot_id1] [magic1] [frame_id1] [reserved1] [crc32_4] [payload248] [帧尾4]
+                    //         0-3      4          5         6           7           8-11      12-259      260-263
+                    lastSlotId = rx_buf[4];        // 字节4 = slot_id
+                    lastImageMagic = rx_buf[5];    // 字节5 = magic/type
+                    lastFrameNum = rx_buf[6];      // 字节6 = frame_id/pageIdx
+                    // rx_buf[7];                  // 字节7 = reserved
                     crcReceived = (rx_buf[8]<<24)|(rx_buf[9]<<16)|(rx_buf[10]<<8)|rx_buf[11];
                     data = &rx_buf[12];
 
+                    UARTIF_uartPrintf(0, "[IMG_DBG] Parse: magic=0x%02X, slot=%d, frame=%d\r\n",
+                                     lastImageMagic, lastSlotId, lastFrameNum);
+
                     // CRC校验和参数有效性检查
                     crcCalc = calculate_crc32_default(data, IMAGE_PAGE_SIZE);
-                    if (crcCalc != crcReceived ||
-                        (lastImageMagic != MAGIC_BW_IMAGE_DATA && lastImageMagic != MAGIC_RED_IMAGE_DATA) ||
-                        lastSlotId >= MAX_IMAGE_ENTRIES ||
-                        lastFrameNum >= IMAGE_PAGE_COUNT)
+
+                    UARTIF_uartPrintf(0, "[IMG_DBG] CRC: rx=0x%08lX, calc=0x%08lX\r\n",
+                                     crcReceived, crcCalc);
+
+                    if (crcCalc != crcReceived)
                     {
-                        sendCmdNack();
+                        debugPrint("CRC mismatch!");
+                        sendCmd8(IMAGE_COMMAND_ID_SEQ_ERR, ERROR_SUBCODE_CRC_FAIL, lastFrameNum, 0xff, 0xff);
+                        rx_idx = 0;
+                        timeout_cycle = 0;
+                        state = IMGTRSF_IDLE;
+                        memset(rx_buf, 0, IMAGE_FRAME_SIZE);
+                    }
+                    else if (lastImageMagic != MAGIC_BW_IMAGE_DATA && lastImageMagic != MAGIC_RED_IMAGE_DATA)
+                    {
+                        debugPrint("Invalid magic!");
+                        sendCmd8(IMAGE_COMMAND_ID_SEQ_ERR, ERROR_SUBCODE_INVALID_MAGIC, lastImageMagic, 0xff, 0xff);
+                        rx_idx = 0;
+                        timeout_cycle = 0;
+                        state = IMGTRSF_IDLE;
+                        memset(rx_buf, 0, IMAGE_FRAME_SIZE);
+                    }
+                    else if (lastSlotId >= MAX_IMAGE_ENTRIES)
+                    {
+                        debugPrint("Invalid slot!");
+                        sendCmd8(IMAGE_COMMAND_ID_SEQ_ERR, ERROR_SUBCODE_INVALID_SLOT, lastSlotId, 0xff, 0xff);
+                        rx_idx = 0;
+                        timeout_cycle = 0;
+                        state = IMGTRSF_IDLE;
+                        memset(rx_buf, 0, IMAGE_FRAME_SIZE);
+                    }
+                    else if (lastFrameNum >= IMAGE_PAGE_COUNT)
+                    {
+                        debugPrint("Invalid frame num!");
+                        sendCmd8(IMAGE_COMMAND_ID_SEQ_ERR, ERROR_SUBCODE_INVALID_FRAME, lastFrameNum, 0xff, 0xff);
                         rx_idx = 0;
                         timeout_cycle = 0;
                         state = IMGTRSF_IDLE;
@@ -311,6 +495,7 @@ void ImageTransfer_Process(void)
                     }
                     else
                     {
+                        debugPrint("Frame valid, saving...");
                         state = IMGTRSF_SAVING_DATA;
                     }
                 }
@@ -319,9 +504,11 @@ void ImageTransfer_Process(void)
         case IMGTRSF_SAVING_DATA:
             // Handle saving data state
             data = &rx_buf[12];
+            debugPrint("Writing to flash...");
             re = FM_writeData(lastImageMagic, (uint16_t)(lastSlotId << 8 | lastFrameNum), data, IMAGE_PAGE_SIZE);
             if (re != FLASH_OK)
             {
+                UARTIF_uartPrintf(0, "[IMG_DBG] Flash write error: %d\r\n", re);
                 sendCmd8(IMAGE_COMMAND_ID_GENERAL, IMAGE_COMMAND_SUBID_INTERNAL, re, 0xff, 0xff);
                 ImageTransfer_Init();
             }
@@ -329,6 +516,11 @@ void ImageTransfer_Process(void)
             {
                 // 更新接收状态
                 frameIsFull |= ((uint64_t)1 << lastFrameNum);
+
+                UARTIF_uartPrintf(0, "[IMG_DBG] Frame %d saved, frameIsFull=0x%08lX%08lX\r\n",
+                                 lastFrameNum,
+                                 (uint32_t)(frameIsFull >> 32),
+                                 (uint32_t)(frameIsFull & 0xFFFFFFFF));
 
                 // 清理缓冲区，准备接收下一帧
                 rx_idx = 0;
@@ -338,20 +530,24 @@ void ImageTransfer_Process(void)
 
                 if (frameIsFull == 0x1FFFFFFFFFFFFF) // 61页全满 (bits 0-60)
                 {
+                    debugPrint("All frames received! Writing header...");
                     re = FM_writeImageHeader(lastImageMagic - 2u, lastSlotId);
                     if (re != FLASH_OK)
                     {
+                        UARTIF_uartPrintf(0, "[IMG_DBG] Header write error: %d\r\n", re);
                         sendCmd8(IMAGE_COMMAND_ID_GENERAL, IMAGE_COMMAND_SUBID_INTERNAL, re, 0xff, 0xff);
                     }
                     else
                     {
                         // 全部接收完成，发送 COMPLETE
+                        debugPrint("Transfer COMPLETE!");
                         sendCmdAck(IMAGE_COMMAND_ID_COMPLETE);
                     }
                     ImageTransfer_Init();
                 }
                 else
                 {
+                    debugPrint("Sending ACK");
                     sendCmdAck(IMAGE_COMMAND_ID_ACK);
                 }
             }
@@ -360,6 +556,49 @@ void ImageTransfer_Process(void)
         default:
             break;
     }
+}
+
+/**
+ * @brief 诊断函数：输出当前接收状态
+ */
+void ImageTransfer_PrintDiagnostics(void)
+{
+    uint32_t uartRxCnt = 0, queueOverflow = 0;
+    uint16_t i;
+
+    UARTIF_getUartStats(&uartRxCnt, &queueOverflow);
+
+    UARTIF_uartPrintf(0, "\r\n=== Image Transfer Diagnostics ===\r\n");
+    UARTIF_uartPrintf(0, "State: %d (0=IDLE, 1=RCV_DATA, 2=SAVING, 3=WAIT_NEXT)\r\n", state);
+    UARTIF_uartPrintf(0, "RX Buffer Index: %d/%d\r\n", rx_idx, IMAGE_FRAME_SIZE);
+    UARTIF_uartPrintf(0, "Frames received: %u\r\n", frameCount);
+    UARTIF_uartPrintf(0, "Total bytes received: %u\r\n", totalBytesReceived);
+    UARTIF_uartPrintf(0, "UART RX count: %u\r\n", uartRxCnt);
+    UARTIF_uartPrintf(0, "Queue overflows: %u\r\n", queueOverflow);
+    UARTIF_uartPrintf(0, "frameIsFull: 0x%08lX%08lX\r\n",
+                     (uint32_t)(frameIsFull >> 32), (uint32_t)(frameIsFull & 0xFFFFFFFF));
+    UARTIF_uartPrintf(0, "Last magic=0x%02X, slot=%d, frame=%d\r\n",
+                     lastImageMagic, lastSlotId, lastFrameNum);
+
+    if (rx_idx > 0 && rx_idx < 32)
+    {
+        UARTIF_uartPrintf(0, "Buffer content: ");
+        for (i = 0; i < rx_idx; i++)
+        {
+            UARTIF_uartPrintf(0, "%02X ", rx_buf[i]);
+        }
+        UARTIF_uartPrintf(0, "\r\n");
+    }
+    else if (rx_idx >= 32)
+    {
+        UARTIF_uartPrintf(0, "Buffer first 32 bytes: ");
+        for (i = 0; i < 32; i++)
+        {
+            UARTIF_uartPrintf(0, "%02X ", rx_buf[i]);
+        }
+        UARTIF_uartPrintf(0, "\r\n");
+    }
+    UARTIF_uartPrintf(0, "=== End Diagnostics ===\r\n\r\n");
 }
 
 /******************************************************************************

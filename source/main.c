@@ -43,7 +43,7 @@
 #include "lpm.h"
 #include "w25q32.h"
 #include "flash_manager.h"
-#include "image_transfer.h"
+#include "image_transfer_v2.h"
 // #include "testCase.h"
 #include <stdlib.h>
 
@@ -88,21 +88,17 @@ uint8_t u8Recdata[8]={0x00};
 
 void Bt0Int(void)
 {
+    Bt_ClearIntFlag(TIM0);
 
+    // Call passThrough and image transfer processing every 1ms
     UARTIF_passThrough();
     (void)E104_getLinkState();
 
-    /* 5ms */
-    // if (TRUE == Bt_GetIntFlag(TIM0))
-    // {
-        Bt_ClearIntFlag(TIM0);
-    // }
-    // timer0++;
+    // High frequency image transfer processing (every 1ms)
+    tg5ms = TRUE;  // Note: now 1ms, not 5ms, but keep variable name for compatibility
 
-    // 每5ms设置image transfer任务flag
-    tg5ms = TRUE;
-
-    if (timer0 < 199)  // 1s
+    // Maintain original timer counter logic for generating other time flags
+    if (timer0 < 7999)  // 1s (originally 200->5ms, now 8000->1ms)
     {
         timer0++;
     }
@@ -111,7 +107,7 @@ void Bt0Int(void)
         timer0 = 0;
     }
 
-    if ((timer0 % 2) == 0) // 10ms
+    if ((timer0 % 10) == 0) // 10ms (originally 2->10ms, now 10->10ms)
     {
         tg1 = TRUE;
     }
@@ -137,8 +133,8 @@ void LptInt(void)
 
 
 /**********************************************************
-*  CRC校验类型：CRC8
-*  多项式：X8+X5+X4+1
+*  CRC Check Type: CRC8
+*  Polynomial: X8+X5+X4+1
 *  Poly:0011 0001 0x31
 **********************************************************/
 
@@ -181,12 +177,12 @@ void LptInt(void)
 static void timInit(void)
 {
     stc_bt_config_t   stcConfig;
-    
+
     stcConfig.pfnTim1Cb = NULL;
-        
+
     stcConfig.enGateP = BtPositive;
     stcConfig.enGate  = BtGateDisable;
-    stcConfig.enPRS   = BtPCLKDiv8;
+    stcConfig.enPRS   = BtPCLKDiv8;  // PCLK/8
     stcConfig.enTog   = BtTogDisable;
     stcConfig.enCT    = BtTimer;
     stcConfig.enMD    = BtMode2;
@@ -194,15 +190,19 @@ static void timInit(void)
     Bt_Stop(TIM0);
 
     Bt_Init(TIM0, &stcConfig);
-    
-    //TIM1中断使能
+
+    //TIM中断使能
     Bt_ClearIntFlag(TIM0);
     Bt_EnableIrq(TIM0);
     EnableNvic(TIM0_IRQn, 0, TRUE);
 
-    //设置重载值和计数值，启动计数
-    Bt_ARRSet(TIM0, 0xC537);
-    Bt_Cnt16Set(TIM0, 0xC537);
+    // Set reload value for interrupt period of 1ms (changed to high frequency data reception)
+    // Assume PCLK=8MHz, prescale=/8, actual clock=1MHz
+    // 1ms needs 1000 counts: 1000-1 = 999 = 0x3E7
+    // Original config 0xC537(50487) produces ~50ms interrupt, insufficient receive buffer
+    // To handle streaming data faster, changed to 1ms interrupt
+    Bt_ARRSet(TIM0, 0x03E7);   // 1ms interrupt for faster data reception
+    Bt_Cnt16Set(TIM0, 0x03E7);
     Bt_Run(TIM0);
 
 }
@@ -214,7 +214,7 @@ static void timInit(void)
 //    uint16_t         u16ArrData = 0;
 
 //    Clk_Enable(ClkRCL, TRUE);
-//    //使能Lpt、GPIO外设时钟
+//    // Enable Lpt and GPIO peripheral clock
 //    Clk_SetPeripheralGate(ClkPeripheralLpTim, TRUE);
 
 //    stcConfig.enGateP  = LptPositive;
@@ -232,17 +232,17 @@ static void timInit(void)
 //    stcLpmCfg.enSLEEPONEXIT = SlpExtDisable;
 //    Lpm_Config(&stcLpmCfg);
 //    
-//    //Lpt 中断使能
+//    // Enable Lpt interrupt
 //    Lpt_ClearIntFlag();
 //    Lpt_EnableIrq();
 //    EnableNvic(LPTIM_IRQn, 0, TRUE);
-//    
-//    
-//    //设置重载值，计数初值，启动计数
+//
+//
+//    // Set reload value, count initial value, start counting
 //    Lpt_ARRSet(u16ArrData);
 //    Lpt_Run();
 
-//    // 进入低功耗模式……
+//    // Enter low power mode...
 //    Lpm_GotoLpmMode(); 
 
 //}
@@ -301,9 +301,9 @@ static void timInit(void)
 //{
 //    typedef enum 
 //    {
-//        STATE_IDLE,     // 空闲状态
-//        STATE_WAITING_3_4,  // 等待第三次唤醒
-//        STATE_WAITING_4,  // 等待第四次唤醒
+//        STATE_IDLE,     // Idle state
+//        STATE_WAITING_3_4,  // Wait for third wake
+//        STATE_WAITING_4,  // Wait for fourth wake
 //    } State;
 
 //    static State currentState = STATE_IDLE;
@@ -391,8 +391,8 @@ int32_t main(void)
     delay1ms(100);
 
 
-    // 擦除第0扇区 (地址0x000000)
-    // 使用  0x20 擦除sector的时候，擦除的地址类似0x003000，最后三位没用
+    // Erase sector 0 (address 0x000000)
+    // When using 0x20 to erase sector, erase address like 0x003000, last three bits unused
 //    W25Q32_EraseSector(FLASH_SEGMENT0_BASE);
 //    W25Q32_EraseSector(FLASH_SEGMENT1_BASE);
 
@@ -402,7 +402,7 @@ int32_t main(void)
 // UARTIF_uartPrintf(0, "Start erase block 4!\n");
     // W25Q32_Erase64k(0x040000);
 
-   // 写入一页数据
+   // Write one page of data
 //    UARTIF_uartPrintf(0, "Start write block test!\n");
 //    writeBlockTest();
 //     delay1ms(500);
@@ -424,12 +424,12 @@ int32_t main(void)
 //    }
 
 //    UARTIF_uartPrintf(0, "Write page 0 as 0x77! \n");
-//    memset(buffer, 0x77, 256);  // 填充测试数据
+//    memset(buffer, 0x77, 256);  // Fill test data
 //    W25Q32_WritePage(0x000000, buffer, 256);
 
 
 //    UARTIF_uartPrintf(0, "Write page 1 as 0x55! \n");
-//    memset(buffer, 0x55, 256);  // 填充测试数据
+//    memset(buffer, 0x55, 256);  // Fill test data
 //    W25Q32_WritePage(0x000100, buffer, 256);
 
 
@@ -443,9 +443,23 @@ int32_t main(void)
         UARTIF_uartPrintf(0, "flash_manager init completely!\n");
     }
 
-    // 初始化image transfer模块
-    ImageTransfer_Init();
+    // Initialize image transfer module
+    ImageTransferV2_Init();
     UARTIF_uartPrintf(0, "image_transfer init completely!\n");
+
+    // ==================== Debug: Test UART and Protocol ====================
+    UARTIF_uartPrintf(0, "\n");
+    UARTIF_uartPrintf(0, "===================================================\n");
+    UARTIF_uartPrintf(0, "   Image Transfer Protocol V2 - Debug Mode Started\n");
+    UARTIF_uartPrintf(0, "===================================================\n");
+    UARTIF_uartPrintf(0, "[DEBUG] MCU Ready, waiting for PC START command...\n");
+    UARTIF_uartPrintf(0, "[DEBUG] UART Baud Rate: 9600 baud\n");
+    UARTIF_uartPrintf(0, "[DEBUG] Flash Manager: %s\n", (FM_init() == FLASH_OK) ? "OK" : "FAIL");
+    UARTIF_uartPrintf(0, "[DEBUG] If START command not seen, check:\n");
+    UARTIF_uartPrintf(0, "  1. PC to MCU UART connection\n");
+    UARTIF_uartPrintf(0, "  2. Baud rate settings match\n");
+    UARTIF_uartPrintf(0, "  3. PC sent START correctly\n");
+    UARTIF_uartPrintf(0, "===================================================\n\n");
     // testFlashManagerReadAndWrite();
     // testFlashManagerReadAndWrite();
     // FM_forceGarbageCollect();
@@ -498,7 +512,7 @@ int32_t main(void)
         if (tg5ms)
         {
             tg5ms = FALSE;
-            ImageTransfer_Process();
+            ImageTransferV2_Process();
         }
 
         // EPD_WhiteScreenGDEY042Z98UsingFlashDate(0x000000);

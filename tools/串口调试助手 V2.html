@@ -9,16 +9,21 @@
             font-family: Arial, sans-serif;
             margin: 0;
             padding: 0;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
+            padding-bottom: 20px;
+            overflow-y: auto;
         }
         textarea {
             width: 100%;
-            flex: 1;
-            margin: 0;
+            height: 200px;
+            margin: 5px 0;
             box-sizing: border-box;
-            resize: none;
+            resize: vertical;
+        }
+        #outputArea {
+            height: 250px;
+        }
+        #inputArea {
+            height: 150px;
         }
         .settings {
             display: flex;
@@ -42,6 +47,74 @@
         button {
             margin-right: 10px;
         }
+        .image-transfer-section {
+            border: 2px solid #4CAF50;
+            padding: 15px;
+            margin: 10px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        .image-transfer-section h2 {
+            margin-top: 0;
+            color: #4CAF50;
+        }
+        .image-preview {
+            display: flex;
+            gap: 20px;
+            margin: 10px 0;
+        }
+        .preview-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .preview-container canvas {
+            border: 1px solid #ccc;
+            max-width: 400px;
+            max-height: 300px;
+        }
+        #processedCanvas {
+            cursor: move;
+            border: 2px solid #4CAF50;
+        }
+        .canvas-info {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .image-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 10px 0;
+            align-items: center;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        .status-text {
+            color: #666;
+            margin: 5px 0;
+        }
+        input[type="range"] {
+            width: 200px;
+        }
     </style>
 </head>
 <body>
@@ -56,7 +129,7 @@
             <option value="19200">19200</option>
             <option value="38400">38400</option>
             <option value="57600">57600</option>
-            <option value="115200">115200</option>
+            <option value="115200" selected>115200</option>
         </select>
 
         <label for="dataBits">数据长度:</label>
@@ -101,6 +174,61 @@
         <button id="saveButton">保存接收数据</button>
     </div>
 
+    <!-- 图像传输测试区域 -->
+    <div class="image-transfer-section">
+        <h2>图像传输测试</h2>
+
+        <div class="image-controls">
+            <input type="file" id="imageInput" accept="image/*">
+            <button id="binarizeButton" disabled>二值化处理</button>
+            <button id="edgeDetectButton" disabled>线稿提取</button>
+            <button id="cropButton" disabled>裁剪至400x300</button>
+
+            <label for="thresholdSlider">二值化阈值:</label>
+            <input type="range" id="thresholdSlider" min="0" max="255" value="128">
+            <span id="thresholdValue">128</span>
+
+            <label for="slotIdInput">Slot ID:</label>
+            <input type="number" id="slotIdInput" min="0" max="7" value="0" style="width: 60px;">
+
+            <label for="imageTypeSelect">图像类型:</label>
+            <select id="imageTypeSelect">
+                <option value="0xA3">BW (0xA3)</option>
+                <option value="0xA4">RED (0xA4)</option>
+            </select>
+
+            <label for="delayInput">响应超时(ms):</label>
+            <input type="number" id="delayInput" min="500" max="5000" value="2000" style="width: 80px;">
+
+            <label for="showDataCheckbox">显示发送数据:</label>
+            <input type="checkbox" id="showDataCheckbox" checked>
+        </div>
+
+        <div class="image-preview">
+            <div class="preview-container">
+                <h3>原始图像</h3>
+                <canvas id="originalCanvas"></canvas>
+                <div class="canvas-info" id="originalInfo"></div>
+            </div>
+            <div class="preview-container">
+                <h3>处理后图像（可拖动调整位置）</h3>
+                <canvas id="processedCanvas" width="400" height="300"></canvas>
+                <div class="canvas-info">拖动图像调整裁剪位置 | 鼠标滚轮缩放</div>
+            </div>
+        </div>
+
+        <div class="buttons">
+            <button id="sendImageButton" disabled>发送图像数据</button>
+            <button id="stopSendButton" disabled>停止发送</button>
+        </div>
+
+        <div class="progress-bar">
+            <div class="progress-fill" id="progressFill">0%</div>
+        </div>
+        <div class="status-text" id="statusText">等待加载图像...</div>
+        <div class="status-text" id="statsText" style="font-size: 12px; color: #999;">统计: 发送0页 | 重传0次 | 成功率100%</div>
+    </div>
+
     <textarea id="outputArea" placeholder="接收的数据将显示在此处..." readonly></textarea>
     <textarea id="inputArea" placeholder="在此输入要发送的数据..."></textarea>
     <div class="buttons">
@@ -129,6 +257,75 @@
         let paritySelect = document.getElementById('parity');
         let stopBitsSelect = document.getElementById('stopBits');
 
+        // 图像传输相关
+        let imageInput = document.getElementById('imageInput');
+        let binarizeButton = document.getElementById('binarizeButton');
+        let edgeDetectButton = document.getElementById('edgeDetectButton');
+        let cropButton = document.getElementById('cropButton');
+        let thresholdSlider = document.getElementById('thresholdSlider');
+        let thresholdValue = document.getElementById('thresholdValue');
+        let slotIdInput = document.getElementById('slotIdInput');
+        let imageTypeSelect = document.getElementById('imageTypeSelect');
+        let delayInput = document.getElementById('delayInput');
+        let showDataCheckbox = document.getElementById('showDataCheckbox');
+        let sendImageButton = document.getElementById('sendImageButton');
+        let stopSendButton = document.getElementById('stopSendButton');
+        let progressFill = document.getElementById('progressFill');
+        let statusText = document.getElementById('statusText');
+        let statsText = document.getElementById('statsText');
+        let originalCanvas = document.getElementById('originalCanvas');
+        let processedCanvas = document.getElementById('processedCanvas');
+
+        let originalImage = null;
+        let processedImageData = null;
+        let stopSending = false;
+
+        const PAYLOAD_SIZE = 248;
+        const IMAGE_WIDTH = 400;
+        const IMAGE_HEIGHT = 300;
+        const IMAGE_BYTES = 50 * 300; // 15000 bytes
+        const TOTAL_PAGES = Math.ceil(IMAGE_BYTES / PAYLOAD_SIZE); // 61 pages
+
+        // 图像变换参数
+        let imageOffsetX = 0;
+        let imageOffsetY = 0;
+        let imageScale = 1.0;
+        let isDragging = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+        let currentProcessMode = null; // 'binarize', 'edge', 'crop'
+
+        // 协议命令定义
+        const CMD_HEADER_MAGIC = 0xCA;
+        const CMD_TAIL_MAGIC = 0xAC;
+        const CMD_TAIL_NEWLINE = 0x0A;
+        const CMD_ID_GENERAL = 0xB0;
+        const CMD_ID_ACK = 0xB1;
+        const CMD_ID_NACK = 0xB3;
+        const CMD_ID_COMPLETE = 0xB5;
+        const CMD_ID_SEQ_ERR = 0xB7;
+        const CMD_SUBID_TIMEOUT = 0x01;
+        const CMD_SUBID_BUSY = 0x02;
+        const CMD_SUBID_INTERNAL = 0x03;
+
+        // 错误子码定义（用于调试）
+        const ERROR_SUBCODE_IDLE_NOT_HEADER = 0x10;
+        const ERROR_SUBCODE_TAIL_MISMATCH = 0x11;
+        const ERROR_SUBCODE_CRC_FAIL = 0x12;
+        const ERROR_SUBCODE_INVALID_MAGIC = 0x13;
+        const ERROR_SUBCODE_INVALID_SLOT = 0x14;
+        const ERROR_SUBCODE_INVALID_FRAME = 0x15;
+
+        // 传输状态
+        let rxBuffer = [];
+        let waitingForResponse = false;
+        let responseTimeout = null;
+        let currentPageIdx = 0;
+        let retryCount = 0;
+        const MAX_RETRY = 5;
+        let totalPagesSent = 0;
+        let totalRetries = 0;
+
         connectButton.addEventListener('click', async () => {
             try {
                 port = await navigator.serial.requestPort();
@@ -146,11 +343,28 @@
                 rtsHighRadio.disabled = false;
 
                 reader = port.readable.getReader();
+                readLoop();
+            } catch (err) {
+                console.error('连接失败:', err);
+                alert('连接失败，请确保设备已插入并选择正确的串口。');
+            }
+        });
+
+        async function readLoop() {
+            try {
                 while (true) {
                     const { value, done } = await reader.read();
                     if (done) break;
 
                     if (value) {
+                        // 添加到接收缓冲区用于命令解析
+                        for (let i = 0; i < value.length; i++) {
+                            rxBuffer.push(value[i]);
+                        }
+
+                        // 尝试解析命令
+                        parseCommands();
+
                         let receivedData = new TextDecoder().decode(value);
 
                         if (displayModeSelect.value === 'hex') {
@@ -168,10 +382,183 @@
                     }
                 }
             } catch (err) {
-                console.error('连接失败:', err);
-                alert('连接失败，请确保设备已插入并选择正确的串口。');
+                console.error('读取数据错误:', err);
             }
-        });
+        }
+
+        // 解析接收到的命令
+        function parseCommands() {
+            while (rxBuffer.length >= 8) {
+                // 查找命令头
+                let headerIdx = -1;
+                for (let i = 0; i < rxBuffer.length - 7; i++) {
+                    if (rxBuffer[i] === CMD_HEADER_MAGIC) {
+                        headerIdx = i;
+                        break;
+                    }
+                }
+
+                if (headerIdx === -1) {
+                    // 没有找到命令头，清空缓冲区（保留最后7个字节）
+                    if (rxBuffer.length > 7) {
+                        rxBuffer = rxBuffer.slice(-7);
+                    }
+                    break;
+                }
+
+                // 移除命令头之前的数据
+                if (headerIdx > 0) {
+                    rxBuffer = rxBuffer.slice(headerIdx);
+                }
+
+                // 检查是否是8字节命令
+                if (rxBuffer.length >= 8) {
+                    if (rxBuffer[6] === CMD_TAIL_MAGIC && rxBuffer[7] === CMD_TAIL_NEWLINE) {
+                        // 完整的8字节命令
+                        const cmd = rxBuffer.slice(0, 8);
+                        rxBuffer = rxBuffer.slice(8);
+                        handleCommand8(cmd);
+                        continue;
+                    }
+                }
+
+                // 检查是否是14字节命令
+                if (rxBuffer.length >= 14) {
+                    if (rxBuffer[12] === CMD_TAIL_MAGIC && rxBuffer[13] === CMD_TAIL_NEWLINE) {
+                        // 完整的14字节命令
+                        const cmd = rxBuffer.slice(0, 14);
+                        rxBuffer = rxBuffer.slice(14);
+                        handleCommand14(cmd);
+                        continue;
+                    }
+                }
+
+                // 如果既不是8字节也不是14字节命令，移除第一个字节继续查找
+                if (rxBuffer.length >= 14) {
+                    rxBuffer.shift();
+                } else {
+                    break; // 等待更多数据
+                }
+            }
+        }
+
+        // 处理8字节命令
+        function handleCommand8(cmd) {
+            const cmdId = cmd[1];
+            const param1 = cmd[2];
+            const param2 = cmd[3];
+            const param3 = cmd[4];
+            const param4 = cmd[5];
+
+            let logMsg = `[CMD] 收到8字节命令: `;
+
+            if (cmdId === CMD_ID_GENERAL) {
+                if (param1 === CMD_SUBID_TIMEOUT) {
+                    logMsg += `超时重传 (0xB0 0x01)`;
+                    logToStatus(logMsg, 'warning');
+                    handleRetransmit('超时');
+                } else if (param1 === CMD_SUBID_BUSY) {
+                    const busyTime = param2 * 100;
+                    logMsg += `设备忙 (0xB0 0x02)，等待 ${busyTime}ms`;
+                    logToStatus(logMsg, 'warning');
+                    handleBusy(busyTime);
+                } else if (param1 === CMD_SUBID_INTERNAL) {
+                    logMsg += `内部错误 (0xB0 0x03)，错误码: 0x${param2.toString(16).padStart(2, '0')}`;
+                    logToStatus(logMsg, 'error');
+                    handleError(`内部错误: 0x${param2.toString(16).padStart(2, '0')}`);
+                }
+            } else if (cmdId === CMD_ID_SEQ_ERR) {
+                if (param1 === ERROR_SUBCODE_IDLE_NOT_HEADER) {
+                    logMsg += `序列错误: IDLE状态未找到帧头 (0xB7 0x10), 收到: ${param2.toString(16).padStart(2, '0')} ${param3.toString(16).padStart(2, '0')} ${param4.toString(16).padStart(2, '0')}`;
+                } else if (param1 === ERROR_SUBCODE_TAIL_MISMATCH) {
+                    logMsg += `序列错误: 帧尾不匹配 (0xB7 0x11), 收到尾: ${param2.toString(16).padStart(2, '0')} ${param3.toString(16).padStart(2, '0')} ${param4.toString(16).padStart(2, '0')}`;
+                } else if (param1 === ERROR_SUBCODE_CRC_FAIL) {
+                    logMsg += `序列错误: CRC校验失败 (0xB7 0x12), frame=${param2}`;
+                } else if (param1 === ERROR_SUBCODE_INVALID_MAGIC) {
+                    logMsg += `序列错误: 无效的magic (0xB7 0x13), magic=0x${param2.toString(16).padStart(2, '0')}`;
+                } else if (param1 === ERROR_SUBCODE_INVALID_SLOT) {
+                    logMsg += `序列错误: 无效的slot (0xB7 0x14), slot=${param2}`;
+                } else if (param1 === ERROR_SUBCODE_INVALID_FRAME) {
+                    logMsg += `序列错误: 无效的frame编号 (0xB7 0x15), frame=${param2}`;
+                } else if (param1 === 0xFF) {
+                    logMsg += `序列错误: 通用错误 (0xB7 0xFF)`;
+                } else {
+                    logMsg += `序列错误 (0xB7 0x${param1.toString(16).padStart(2, '0')})`;
+                }
+                logToStatus(logMsg, 'error');
+                handleRetransmit('序列错误');
+            } else {
+                logMsg += `未知命令 0x${cmdId.toString(16).padStart(2, '0')}`;
+                logToStatus(logMsg, 'error');
+            }
+        }
+
+        // 处理14字节命令
+        function handleCommand14(cmd) {
+            const cmdId = cmd[1];
+            const magic = cmd[2];
+            const slotId = cmd[3];
+            // frameIsFull 是64位，使用BigInt解析
+            const frameIsFull =
+                BigInt(cmd[4]) | (BigInt(cmd[5]) << 8n) | (BigInt(cmd[6]) << 16n) | (BigInt(cmd[7]) << 24n) |
+                (BigInt(cmd[8]) << 32n) | (BigInt(cmd[9]) << 40n) | (BigInt(cmd[10]) << 48n) | (BigInt(cmd[11]) << 56n);
+
+            let logMsg = `[CMD] 收到14字节命令: `;
+
+            if (cmdId === CMD_ID_ACK) {
+                const receivedPages = countSetBits(frameIsFull);
+                logMsg += `ACK (0xB1) - 第${currentPageIdx}页成功 (已接收${receivedPages}/${TOTAL_PAGES}页)`;
+                logToStatus(logMsg, 'success');
+                handleAck();
+            } else if (cmdId === CMD_ID_NACK) {
+                logMsg += `NACK (0xB3) - 第${currentPageIdx}页失败，需要重传`;
+                logToStatus(logMsg, 'warning');
+                handleRetransmit('NACK');
+            } else if (cmdId === CMD_ID_COMPLETE) {
+                logMsg += `COMPLETE (0xB5) - 图像传输完成！`;
+                logToStatus(logMsg, 'success');
+                handleComplete();
+            } else if (cmdId === CMD_ID_SEQ_ERR) {
+                logMsg += `SEQ_ERR (0xB7) - 序列错误，需要重传`;
+                logToStatus(logMsg, 'warning');
+                handleRetransmit('序列错误');
+            } else {
+                logMsg += `未知命令 0x${cmdId.toString(16).padStart(2, '0')}`;
+                logToStatus(logMsg, 'error');
+            }
+        }
+
+        // 计算BigInt中设置的位数
+        function countSetBits(bigIntValue) {
+            let count = 0;
+            let value = bigIntValue;
+            while (value > 0n) {
+                if (value & 1n) count++;
+                value >>= 1n;
+            }
+            return count;
+        }
+
+        // 日志输出
+        function logToStatus(msg, type = 'info') {
+            const now = new Date();
+            const timestamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}.${String(now.getMilliseconds()).padStart(3, '0')}`;
+
+            const prefix = type === 'error' ? '❌' : type === 'warning' ? '⚠️' : type === 'success' ? '✅' : 'ℹ️';
+            statusText.textContent = `[${timestamp}] ${prefix} ${msg}`;
+
+            if (showDataCheckbox.checked) {
+                inputArea.value += `[${timestamp}] ${msg}\n`;
+                inputArea.scrollTop = inputArea.scrollHeight;
+            }
+        }
+
+        // 更新统计信息
+        function updateStats() {
+            const successRate = totalPagesSent > 0 ?
+                ((totalPagesSent - totalRetries) / totalPagesSent * 100).toFixed(1) : 100;
+            statsText.textContent = `统计: 发送${totalPagesSent}页 | 重传${totalRetries}次 | 成功率${successRate}%`;
+        }
 
         disconnectButton.addEventListener('click', async () => {
             try {
@@ -239,6 +626,522 @@
             a.click();
             URL.revokeObjectURL(url);
         });
+
+        // ========== 图像处理功能 ==========
+
+        // CRC32计算（使用IEEE 802.3标准）
+        function calculateCRC32(data) {
+            let crc = 0xFFFFFFFF;
+            for (let i = 0; i < data.length; i++) {
+                crc ^= data[i];
+                for (let j = 0; j < 8; j++) {
+                    if (crc & 1) {
+                        crc = (crc >>> 1) ^ 0xEDB88320;
+                    } else {
+                        crc = crc >>> 1;
+                    }
+                }
+            }
+            return (crc ^ 0xFFFFFFFF) >>> 0;
+        }
+
+        thresholdSlider.addEventListener('input', (e) => {
+            thresholdValue.textContent = e.target.value;
+            // 实时更新处理效果
+            if (currentProcessMode) {
+                redrawProcessedImage();
+            }
+        });
+
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        originalImage = img;
+                        displayOriginalImage(img);
+                        resetImageTransform();
+                        binarizeButton.disabled = false;
+                        edgeDetectButton.disabled = false;
+                        cropButton.disabled = false;
+                        statusText.textContent = `图像已加载: ${img.width}x${img.height}`;
+                    };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        function displayOriginalImage(img) {
+            // 保持长宽比显示
+            const maxWidth = 400;
+            const maxHeight = 300;
+            const ratio = Math.min(maxWidth / img.width, maxHeight / img.height);
+            const displayWidth = img.width * ratio;
+            const displayHeight = img.height * ratio;
+
+            originalCanvas.width = displayWidth;
+            originalCanvas.height = displayHeight;
+            const ctx = originalCanvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, displayWidth, displayHeight);
+
+            document.getElementById('originalInfo').textContent =
+                `原始: ${img.width}x${img.height} | 显示: ${Math.round(displayWidth)}x${Math.round(displayHeight)}`;
+        }
+
+        function resetImageTransform() {
+            // 计算初始缩放比例，使图像适配400x300画布
+            const scaleX = IMAGE_WIDTH / originalImage.width;
+            const scaleY = IMAGE_HEIGHT / originalImage.height;
+            imageScale = Math.max(scaleX, scaleY); // 使用max以确保图像至少覆盖整个画布
+            imageOffsetX = 0;
+            imageOffsetY = 0;
+        }
+
+        // 画布鼠标事件
+        processedCanvas.addEventListener('mousedown', (e) => {
+            if (!currentProcessMode) return;
+            isDragging = true;
+            const rect = processedCanvas.getBoundingClientRect();
+            lastMouseX = e.clientX - rect.left;
+            lastMouseY = e.clientY - rect.top;
+        });
+
+        processedCanvas.addEventListener('mousemove', (e) => {
+            if (!isDragging || !currentProcessMode) return;
+            const rect = processedCanvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            imageOffsetX += mouseX - lastMouseX;
+            imageOffsetY += mouseY - lastMouseY;
+
+            lastMouseX = mouseX;
+            lastMouseY = mouseY;
+
+            redrawProcessedImage();
+        });
+
+        processedCanvas.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        processedCanvas.addEventListener('mouseleave', () => {
+            isDragging = false;
+        });
+
+        processedCanvas.addEventListener('wheel', (e) => {
+            if (!currentProcessMode) return;
+            e.preventDefault();
+
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            imageScale *= delta;
+            imageScale = Math.max(0.1, Math.min(5, imageScale)); // 限制缩放范围
+
+            redrawProcessedImage();
+        });
+
+        function redrawProcessedImage() {
+            if (!originalImage || !currentProcessMode) return;
+
+            const ctx = processedCanvas.getContext('2d');
+            ctx.clearRect(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT);
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT);
+
+            // 计算绘制位置和大小
+            const scaledWidth = originalImage.width * imageScale;
+            const scaledHeight = originalImage.height * imageScale;
+            const x = (IMAGE_WIDTH - scaledWidth) / 2 + imageOffsetX;
+            const y = (IMAGE_HEIGHT - scaledHeight) / 2 + imageOffsetY;
+
+            ctx.drawImage(originalImage, x, y, scaledWidth, scaledHeight);
+
+            // 根据模式应用处理
+            const imageData = ctx.getImageData(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT);
+            const data = imageData.data;
+            const threshold = parseInt(thresholdSlider.value);
+
+            if (currentProcessMode === 'binarize') {
+                // 二值化处理
+                for (let i = 0; i < data.length; i += 4) {
+                    const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+                    const value = gray > threshold ? 255 : 0;
+                    data[i] = data[i + 1] = data[i + 2] = value;
+                }
+            } else if (currentProcessMode === 'edge') {
+                // 边缘检测处理
+                applyEdgeDetection(imageData, threshold);
+            } else if (currentProcessMode === 'crop') {
+                // 裁剪模式：不做任何处理，保持原图
+                // 图像已经通过drawImage绘制到画布上
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+            processedImageData = imageData;
+        }
+
+        function applyEdgeDetection(imageData, threshold) {
+            const data = imageData.data;
+            const width = IMAGE_WIDTH;
+            const height = IMAGE_HEIGHT;
+
+            // 转灰度
+            const gray = new Uint8Array(width * height);
+            for (let i = 0; i < data.length; i += 4) {
+                gray[i / 4] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+            }
+
+            // Sobel边缘检测
+            const tempData = new Uint8ClampedArray(data.length);
+            tempData.set(data);
+
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    const gx =
+                        -gray[(y - 1) * width + (x - 1)] + gray[(y - 1) * width + (x + 1)] +
+                        -2 * gray[y * width + (x - 1)] + 2 * gray[y * width + (x + 1)] +
+                        -gray[(y + 1) * width + (x - 1)] + gray[(y + 1) * width + (x + 1)];
+
+                    const gy =
+                        -gray[(y - 1) * width + (x - 1)] - 2 * gray[(y - 1) * width + x] - gray[(y - 1) * width + (x + 1)] +
+                        gray[(y + 1) * width + (x - 1)] + 2 * gray[(y + 1) * width + x] + gray[(y + 1) * width + (x + 1)];
+
+                    const magnitude = Math.sqrt(gx * gx + gy * gy);
+                    const idx = (y * width + x) * 4;
+                    const value = magnitude > threshold ? 0 : 255;
+                    data[idx] = data[idx + 1] = data[idx + 2] = value;
+                }
+            }
+        }
+
+        binarizeButton.addEventListener('click', () => {
+            if (!originalImage) return;
+            currentProcessMode = 'binarize';
+            resetImageTransform();
+            redrawProcessedImage();
+            sendImageButton.disabled = false;
+            statusText.textContent = '图像已二值化，可拖动调整位置';
+        });
+
+        edgeDetectButton.addEventListener('click', () => {
+            if (!originalImage) return;
+            currentProcessMode = 'edge';
+            resetImageTransform();
+            redrawProcessedImage();
+            sendImageButton.disabled = false;
+            statusText.textContent = '线稿提取完成，可拖动调整位置';
+        });
+
+        cropButton.addEventListener('click', () => {
+            if (!originalImage) return;
+            currentProcessMode = 'crop';
+            resetImageTransform();
+            redrawProcessedImage();
+            sendImageButton.disabled = false;
+            statusText.textContent = '图像已裁剪至400x300，可拖动调整位置';
+        });
+
+        // 响应处理函数
+        function handleAck() {
+            if (responseTimeout) {
+                clearTimeout(responseTimeout);
+                responseTimeout = null;
+            }
+            waitingForResponse = false;
+            retryCount = 0;
+            currentPageIdx++;
+            updateStats();
+            // 继续发送下一页（在sendImageData中处理）
+        }
+
+        function handleRetransmit(reason) {
+            if (responseTimeout) {
+                clearTimeout(responseTimeout);
+                responseTimeout = null;
+            }
+            waitingForResponse = false;
+            retryCount++;
+            totalRetries++;
+            updateStats();
+            if (retryCount > MAX_RETRY) {
+                handleError(`重传次数超过限制 (${MAX_RETRY}次)`);
+            }
+            // 重传当前页（在sendImageData中处理）
+        }
+
+        function handleBusy(waitTime) {
+            if (responseTimeout) {
+                clearTimeout(responseTimeout);
+                responseTimeout = null;
+            }
+            // 不立即设置waitingForResponse = false，而是在延迟后再继续
+            setTimeout(() => {
+                waitingForResponse = false;
+                retryCount++; // busy也算一次重试
+                totalRetries++;
+                updateStats();
+            }, waitTime);
+        }
+
+        function handleComplete() {
+            if (responseTimeout) {
+                clearTimeout(responseTimeout);
+                responseTimeout = null;
+            }
+            waitingForResponse = false;
+            stopSending = true;
+            progressFill.style.width = '100%';
+            progressFill.textContent = '100%';
+            statusText.textContent = '✅ 图像传输完成！';
+            sendImageButton.disabled = false;
+            stopSendButton.disabled = true;
+        }
+
+        function handleError(errorMsg) {
+            if (responseTimeout) {
+                clearTimeout(responseTimeout);
+                responseTimeout = null;
+            }
+            waitingForResponse = false;
+            stopSending = true;
+            statusText.textContent = `❌ 传输失败: ${errorMsg}`;
+            sendImageButton.disabled = false;
+            stopSendButton.disabled = true;
+        }
+
+        sendImageButton.addEventListener('click', async () => {
+            if (!processedImageData || !port) {
+                alert('请先处理图像并连接串口');
+                return;
+            }
+
+            stopSending = false;
+            sendImageButton.disabled = true;
+            stopSendButton.disabled = false;
+            currentPageIdx = 0;
+            retryCount = 0;
+            totalPagesSent = 0;
+            totalRetries = 0;
+            rxBuffer = []; // 清空接收缓冲区
+            updateStats();
+
+            try {
+                await sendImageData();
+            } catch (err) {
+                console.error('发送图像失败:', err);
+                logToStatus('发送失败: ' + err.message, 'error');
+            } finally {
+                if (!stopSending || retryCount > MAX_RETRY) {
+                    sendImageButton.disabled = false;
+                    stopSendButton.disabled = true;
+                }
+            }
+        });
+
+        stopSendButton.addEventListener('click', () => {
+            stopSending = true;
+            if (responseTimeout) {
+                clearTimeout(responseTimeout);
+                responseTimeout = null;
+            }
+            waitingForResponse = false;
+            logToStatus('用户取消传输', 'warning');
+            sendImageButton.disabled = false;
+            stopSendButton.disabled = true;
+        });
+
+        async function sendImageData() {
+            const slotId = parseInt(slotIdInput.value);
+            const imageType = parseInt(imageTypeSelect.value);
+            const showData = showDataCheckbox.checked;
+
+            // 将图像数据转换为二值字节数组
+            const imageBytes = convertImageToBytes(processedImageData);
+
+            logToStatus(`开始发送图像数据，共${TOTAL_PAGES}页...`, 'info');
+
+            // 清空输入框，准备显示发送的数据
+            if (showData) {
+                inputArea.value = '--- 开始发送图像数据 ---\n';
+                inputArea.value += `配置: Slot=${slotId}, Type=0x${imageType.toString(16).toUpperCase()}, Pages=${TOTAL_PAGES}\n\n`;
+            }
+
+            const writer = port.writable.getWriter();
+
+            try {
+                while (currentPageIdx < TOTAL_PAGES && !stopSending && retryCount <= MAX_RETRY) {
+                    // 计算当前页的数据
+                    const start = currentPageIdx * PAYLOAD_SIZE;
+                    const end = Math.min(start + PAYLOAD_SIZE, imageBytes.length);
+                    const pageData = imageBytes.slice(start, end);
+
+                    // 如果最后一页不足248字节，补0xFF
+                    const paddedData = new Uint8Array(PAYLOAD_SIZE);
+                    paddedData.fill(0xFF);
+                    paddedData.set(pageData);
+
+                    // 构建帧数据
+                    const frame = buildFrame(slotId, imageType, currentPageIdx, paddedData);
+
+                    // 发送帧
+                    await writer.write(frame);
+                    totalPagesSent++;
+                    updateStats();
+                    logToStatus(`发送第${currentPageIdx}页 ${retryCount > 0 ? '(重传 ' + retryCount + ')' : ''}`, 'info');
+
+                    // 更新输入框，显示发送的帧（只显示前几页和最后几页，避免数据过多）
+                    if (showData) {
+                        if (currentPageIdx < 3 || currentPageIdx >= TOTAL_PAGES - 3) {
+                            const frameHex = Array.from(frame).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                            inputArea.value += `[发送] Page ${currentPageIdx}: ${frameHex.substring(0, 60)}...\n`;
+                            inputArea.scrollTop = inputArea.scrollHeight;
+                        } else if (currentPageIdx === 3) {
+                            inputArea.value += `... (省略中间页) ...\n`;
+                        }
+                    }
+
+                    // 更新进度
+                    const progress = ((currentPageIdx + 1) / TOTAL_PAGES * 100).toFixed(1);
+                    progressFill.style.width = progress + '%';
+                    progressFill.textContent = progress + '%';
+
+                    // 等待响应
+                    waitingForResponse = true;
+                    const responseReceived = await waitForResponse();
+
+                    if (!responseReceived) {
+                        // 超时，重传
+                        logToStatus(`第${currentPageIdx}页超时，准备重传`, 'warning');
+                        retryCount++;
+                        totalRetries++;
+                        updateStats();
+                        if (retryCount > MAX_RETRY) {
+                            handleError(`第${currentPageIdx}页重传次数超过限制`);
+                            break;
+                        }
+                        continue; // 重传当前页
+                    }
+
+                    // 如果收到响应但是stopSending被设置，退出
+                    if (stopSending) {
+                        logToStatus('发送已停止', 'warning');
+                        break;
+                    }
+                }
+
+                if (currentPageIdx >= TOTAL_PAGES && !stopSending) {
+                    logToStatus(`所有页面发送完成，等待最终确认...`, 'success');
+                }
+            } finally {
+                writer.releaseLock();
+            }
+        }
+
+        // 等待响应
+        function waitForResponse() {
+            return new Promise((resolve) => {
+                let timeoutOccurred = false;
+                const timeoutMs = parseInt(delayInput.value) || 2000;
+
+                // 设置超时
+                responseTimeout = setTimeout(() => {
+                    timeoutOccurred = true;
+                    waitingForResponse = false;
+                    resolve(false); // 超时
+                }, timeoutMs);
+
+                // 轮询等待响应
+                const checkInterval = setInterval(() => {
+                    if (!waitingForResponse || timeoutOccurred) {
+                        clearInterval(checkInterval);
+                        if (!timeoutOccurred) {
+                            resolve(true); // 收到响应
+                        }
+                    }
+                }, 50);
+            });
+        }
+
+        function convertImageToBytes(imageData) {
+            const data = imageData.data;
+            const width = IMAGE_WIDTH;
+            const height = IMAGE_HEIGHT;
+            const bytes = new Uint8Array(IMAGE_BYTES);
+
+            let byteIdx = 0;
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x += 8) {
+                    let byte = 0;
+                    for (let bit = 0; bit < 8; bit++) {
+                        const pixelX = x + bit;
+                        if (pixelX < width) {
+                            const idx = (y * width + pixelX) * 4;
+                            const gray = data[idx]; // R通道（二值化后RGB相同）
+                            // 白色(255)为1，黑色(0)为0
+                            if (gray > 128) {
+                                byte |= (1 << (7 - bit));
+                            }
+                        }
+                    }
+                    bytes[byteIdx++] = byte;
+                }
+            }
+
+            return bytes;
+        }
+
+        function buildFrame(slotId, imageType, pageIdx, payloadData) {
+            // 帧头 (4 bytes): 0xA5A5A5A5
+            // slot_id (1 byte)
+            // type (1 byte)
+            // page_idx (1 byte)
+            // reserved (1 byte)
+            // crc32 (4 bytes)
+            // payload (248 bytes)
+            // 帧尾 (4 bytes): 0x5A5A5A5A
+            // 总计: 264 bytes
+
+            const frame = new Uint8Array(264);
+            let offset = 0;
+
+            // 帧头
+            frame[offset++] = 0xA5;
+            frame[offset++] = 0xA5;
+            frame[offset++] = 0xA5;
+            frame[offset++] = 0xA5;
+
+            // 元数据
+            frame[offset++] = slotId & 0xFF;
+            frame[offset++] = imageType & 0xFF;
+            frame[offset++] = pageIdx & 0xFF;
+            frame[offset++] = 0x00; // reserved
+
+            // 计算CRC32
+            const crc = calculateCRC32(payloadData);
+            frame[offset++] = (crc >> 24) & 0xFF;
+            frame[offset++] = (crc >> 16) & 0xFF;
+            frame[offset++] = (crc >> 8) & 0xFF;
+            frame[offset++] = crc & 0xFF;
+
+            // 数据
+            frame.set(payloadData, offset);
+            offset += PAYLOAD_SIZE;
+
+            // 帧尾
+            frame[offset++] = 0x5A;
+            frame[offset++] = 0x5A;
+            frame[offset++] = 0x5A;
+            frame[offset++] = 0x5A;
+
+            return frame;
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
     </script>
 </body>
 </html>
