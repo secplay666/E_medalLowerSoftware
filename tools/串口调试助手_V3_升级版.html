@@ -347,7 +347,7 @@
                     <label>&nbsp;</label>
                     <div class="btn-group">
                         <button id="connectBtn" onclick="connectSerial()">连接</button>
-                        <button id="disconnectBtn" onclick="disconnectSerial()" disabled>断开</button>
+                        <button id="disconnectBtn" onclick="disconnectSerial(); return false;" disabled>断开</button>
                         <span style="display: inline-flex; align-items: center;">
                             <span class="status-indicator status-disconnected" id="statusLight"></span>
                             <span id="statusText" style="font-size: 12px;">离线</span>
@@ -649,6 +649,7 @@
         let imageData = null;
         let processedImageData = null;
         let receivedData = new Uint8Array(0);
+        let reader = null;  // 保存读取器引用，用于断开时释放
         let transferStats = {
             framesSent: 0,
             framesAck: 0,
@@ -683,9 +684,24 @@
         const RESP_ACK = 0x20;
         const RESP_NAK = 0x21;
 
+        // Detailed NAK Error Codes (MCU端错误诊断代码)
+        const NAK_ERROR_CODES = {
+            0x21: "通用NAK",
+            0x22: "Checksum错误",
+            0x23: "CRC32错误",
+            0x24: "状态不匹配",
+            0x25: "缓冲区溢出",
+            0x26: "无效的帧（长度或帧号错误）",
+            0x27: "Flash写入失败"
+        };
+
         const IMAGE_PAGES = 61;
         const FRAME_PAYLOAD_SIZE = 248;
-        const FRAME_TIMEOUT_MS = 3000;
+        // IMPORTANT: Increased frame timeout to accommodate flash write delays on MCU
+        // Flash manager needs ~100-150ms per page write + processing time
+        // Previous 3000ms was too short, causing excessive retries
+        // New 8000ms (8 seconds) allows MCU enough time to process and respond
+        const FRAME_TIMEOUT_MS = 8000;
         const CTRL_TIMEOUT_MS = 5000;
 
         // 传输状态
@@ -829,24 +845,58 @@
             }
         }
 
-        function disconnectSerial() {
-            if (port) {
-                port.close();
+        async function disconnectSerial() {
+            try {
+                // 1. 停止传输
+                isTransferring = false;
+
+                // 2. 停止读取循环
                 isConnected = false;
+
+                // 3. 释放读取器
+                if (reader) {
+                    try {
+                        await reader.cancel();
+                    } catch (err) {
+                        log('读取器取消出错: ' + err.message, 'debug');
+                    }
+                    reader.releaseLock();
+                    reader = null;
+                }
+
+                // 4. 关闭串口
+                if (port) {
+                    try {
+                        await port.close();
+                    } catch (err) {
+                        log('串口关闭出错: ' + err.message, 'debug');
+                    }
+                    port = null;
+                }
+
+                // 5. 更新UI
                 document.getElementById('connectBtn').disabled = false;
                 document.getElementById('disconnectBtn').disabled = true;
+                document.getElementById('previewBtn').disabled = true;
+                document.getElementById('processBtn').disabled = true;
+                document.getElementById('sendBtn').disabled = true;
+
                 // 禁用RTS控制单选按钮
                 document.getElementById('rtsLow').disabled = true;
                 document.getElementById('rtsHigh').disabled = true;
                 document.getElementById('statusLight').className = 'status-indicator status-disconnected';
                 document.getElementById('statusText').textContent = '离线';
-                updateStatus('串口已断开', 'info');
+                updateStatus('串口已断开并释放资源', 'success');
+                log('串口资源已完全释放', 'info');
+            } catch (err) {
+                updateStatus('断开连接出错: ' + err.message, 'error');
+                log('断开连接异常: ' + err.message, 'error');
             }
         }
 
         async function startReadLoop() {
             if (!port || !port.readable) return;
-            const reader = port.readable.getReader();
+            reader = port.readable.getReader();
             try {
                 while (isConnected) {
                     const { value, done } = await reader.read();
@@ -859,6 +909,7 @@
                 log('读取错误: ' + err.message, 'error');
             } finally {
                 reader.releaseLock();
+                reader = null;
             }
         }
 
@@ -912,14 +963,15 @@
                         }
                     }
 
-                    // 可能是6字节应答帧 (ACK/NAK)
+                    // 可能是6字节应答帧 (ACK/NAK或详细NAK错误代码)
                     if (i + 5 < data.length && data[i + 5] === PROTO_STOP_MARK) {
                         const respType = data[i + 1];
                         const frameNum = data[i + 2] | (data[i + 3] << 8);
                         const checksum = data[i + 4];
                         const expectedChecksum = (data[i] + respType + data[i + 2] + data[i + 3]) & 0xFF;
 
-                        if ((respType === RESP_ACK || respType === RESP_NAK) && checksum === expectedChecksum) {
+                        // ✅ 接受 ACK (0x20)、通用 NAK (0x21) 或详细 NAK 错误代码 (0x22-0x27)
+                        if ((respType === RESP_ACK || respType === RESP_NAK || (respType >= 0x22 && respType <= 0x27)) && checksum === expectedChecksum) {
                             handleResponseFrame(respType, frameNum);
                             continue;
                         }
@@ -965,13 +1017,17 @@
                     ackPromiseResolve = null;
                     waitingForAck = false;
                 }
-            } else if (respType === RESP_NAK) {
-                log(`❌ 帧${frameNum}需要重传 (NAK)`, 'warning');
+            } else if (respType === RESP_NAK || respType >= 0x22 && respType <= 0x27) {
+                // ✅ 处理通用NAK和详细的NAK错误代码
+                const errorMsg = NAK_ERROR_CODES[respType] || `未知错误代码(0x${respType.toString(16).toUpperCase()})`;
+                const nakDisplayCode = respType === RESP_NAK ? "NAK" : `NAK-0x${respType.toString(16).toUpperCase()}`;
+
+                log(`❌ 帧${frameNum}需要重传 (${nakDisplayCode}): ${errorMsg}`, 'warning');
                 transferStats.nakCount++;
                 document.getElementById('nakCount').textContent = transferStats.nakCount;
 
                 if (ackPromiseResolve) {
-                    ackPromiseResolve({ type: 'NAK', frameNum: frameNum });
+                    ackPromiseResolve({ type: 'NAK', frameNum: frameNum, errorCode: respType, errorMsg: errorMsg });
                     ackPromiseResolve = null;
                     waitingForAck = false;
                 }
@@ -1412,12 +1468,7 @@
                 await sendControlFrameAndWait(CMD_START, CMD_READY, CTRL_TIMEOUT_MS);
                 updateStatus('✅ 单片机已准备好', 'success');
 
-                // ===== 步骤2: 发送图像头并等待ACK =====
-                log('📤 发送图像头', 'info');
-                const headerPayload = new Uint8Array(FRAME_PAYLOAD_SIZE).fill(0xFF);
-                await sendDataFrameAndWaitAck(FRAME_TYPE_IMAGE_HEADER, 0, slotId, headerPayload, maxRetries);
-
-                // ===== 步骤3: 发送61帧数据 =====
+                // ===== 步骤2: 发送61帧数据 =====
                 log('📤 开始发送图像数据 (61帧)...', 'info');
                 const imageBytes = convertImageToBytes(processedImageData);
 
@@ -1455,7 +1506,7 @@
                     return;
                 }
 
-                // ===== 步骤4: 发送END并等待COMPLETE/FAIL =====
+                // ===== 步骤3: 发送END并等待COMPLETE/FAIL =====
                 log('📤 发送END命令，等待单片机验证完整性...', 'info');
                 const result = await sendControlFrameAndWaitResult(CMD_END, CTRL_TIMEOUT_MS);
 
@@ -1532,55 +1583,78 @@
         }
 
         async function sendDataFrameAndWaitAck(frameType, frameNum, slotId, payload, maxRetries) {
+            let lastError = null;
+
             for (let retry = 0; retry < maxRetries; retry++) {
                 if (!isTransferring) {
                     throw new Error('传输已中止');
                 }
 
-                return new Promise((resolve, reject) => {
-                    waitingForAck = true;
-                    let timeoutHandle = null;
+                try {
+                    // 等待这一帧的ACK/NAK响应
+                    const result = await new Promise((resolve, reject) => {
+                        waitingForAck = true;
+                        let timeoutHandle = null;
 
-                    ackPromiseResolve = (result) => {
-                        clearTimeout(timeoutHandle);
+                        ackPromiseResolve = (response) => {
+                            clearTimeout(timeoutHandle);
 
-                        if (result.type === 'ACK' && result.frameNum === frameNum) {
-                            // ACK成功，返回
-                            resolve();
-                        } else if (result.type === 'NAK' && result.frameNum === frameNum) {
-                            // NAK失败，需要重试
+                            if (response.type === 'ACK' && response.frameNum === frameNum) {
+                                // ACK成功，返回
+                                waitingForAck = false;
+                                ackPromiseResolve = null;
+                                resolve(response);
+                            } else if (response.type === 'NAK' && response.frameNum === frameNum) {
+                                // NAK失败，需要重试
+                                // ✅ 显示详细的NAK错误信息
+                                const errorInfo = response.errorMsg ? `: ${response.errorMsg}` : '';
+                                waitingForAck = false;
+                                ackPromiseResolve = null;
+                                reject(new Error(`收到NAK${errorInfo}，需要重试`));
+                            } else {
+                                // 其他响应，忽略（等待正确的响应）
+                                // 不清除ackPromiseResolve，继续等待
+                            }
+                        };
+
+                        timeoutHandle = setTimeout(() => {
                             waitingForAck = false;
                             ackPromiseResolve = null;
-                            reject(new Error(`收到NAK，需要重试`));
-                        } else {
-                            // 其他响应，忽略
-                            ackPromiseResolve = null;
-                            reject(new Error(`期望ACK/NAK for frame ${frameNum}，收到 ${result.type}`));
-                        }
-                    };
+                            reject(new Error(`帧${frameNum}超时`));
+                        }, FRAME_TIMEOUT_MS);
 
-                    timeoutHandle = setTimeout(() => {
-                        waitingForAck = false;
-                        ackPromiseResolve = null;
-                        if (retry < maxRetries - 1) {
-                            reject(new Error(`帧${frameNum}超时，将重试`));
-                        } else {
-                            reject(new Error(`帧${frameNum}重试${maxRetries}次失败`));
-                        }
-                    }, FRAME_TIMEOUT_MS);
+                        // 发送数据帧
+                        const frame = buildDataFrame(frameType, frameNum, slotId, payload);
+                        log(`📤 发送帧${frameNum} (重试 ${retry + 1}/${maxRetries})`, 'debug');
 
-                    const frame = buildDataFrame(frameType, frameNum, slotId, payload);
-                    log(`📤 发送帧${frameNum} (重试 ${retry + 1}/${maxRetries})`, 'debug');
+                        sendFrame(frame).then(() => {
+                            transferStats.framesSent++;
+                            if (retry > 0) {
+                                transferStats.retryCount++;
+                                document.getElementById('retryCount').textContent = transferStats.retryCount;
+                            }
+                        }).catch(reject);
+                    });
 
-                    sendFrame(frame).then(() => {
-                        transferStats.framesSent++;
-                        if (retry > 0) {
-                            transferStats.retryCount++;
-                            document.getElementById('retryCount').textContent = transferStats.retryCount;
-                        }
-                    }).catch(reject);
-                });
+                    // 如果成功收到ACK，返回
+                    log(`✅ 帧${frameNum}已确认 (重试 ${retry + 1}/${maxRetries})`, 'success');
+                    return;
+
+                } catch (err) {
+                    lastError = err;
+                    log(`❌ 帧${frameNum}失败 (重试 ${retry + 1}/${maxRetries}): ${err.message}`, 'warning');
+
+                    // 如果不是最后一次重试，继续
+                    if (retry < maxRetries - 1) {
+                        // 等待一小段时间后重试
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        continue;
+                    }
+                }
             }
+
+            // 所有重试都失败了
+            throw new Error(`帧${frameNum}重试${maxRetries}次失败: ${lastError.message}`);
         }
 
         function convertImageToBytes(imageData) {

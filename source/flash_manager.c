@@ -942,7 +942,9 @@ flash_result_t FM_writeData(uint8_t magic, uint16_t dataId, const uint8_t* data,
     
         memcpy(&G_buffer1[8], data, size);
 
-        UARTIF_uartPrintf(0, "flash_manager: write data to flash nextWriteAddress is 0x%08x! \n", nextWriteAddress);
+        // CRITICAL: DISABLE debug output during image transfer
+        // This interferes with UART protocol communication (ACK/NAK responses)
+        // UARTIF_uartPrintf(0, "flash_manager: write data to flash nextWriteAddress is 0x%08x! \n", nextWriteAddress);
 
         // 写入Flash
         if (W25Q32_WritePage(nextWriteAddress, G_buffer1, FLASH_PAGE_SIZE) != 0)

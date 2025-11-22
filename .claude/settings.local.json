@@ -6,7 +6,8 @@
       "Bash(do if grep -q $'[\\x80-\\xFF]' \"$file\")",
       "Bash(then echo \"Non-ASCII found in: $file\")",
       "Bash(fi)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(findstr:*)"
     ],
     "deny": [],
     "ask": []

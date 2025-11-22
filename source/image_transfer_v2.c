@@ -16,6 +16,10 @@
  * Defines
  ******************************************************************************/
 
+// Debug output control
+// CRITICAL: Disable debug output during data transfer to avoid UART conflicts
+#define ENABLE_DEBUG_OUTPUT       0  // Set to 0 to disable debug logs during transfer, 1 to enable
+
 // Protocol Marks
 #define PROTO_START_MARK          0x55
 #define PROTO_STOP_MARK           0xAA
@@ -23,13 +27,22 @@
 // Command Types
 #define CMD_START                 0x01
 #define CMD_END                   0x02
-#define FRAME_TYPE_IMAGE_HEADER   0x11
-#define FRAME_TYPE_IMAGE_DATA     0x10
+#define FRAME_TYPE_IMAGE_DATA     0x10  // Only data frames, no header frame
 
 // Response Types (Control Frames)
 #define RESP_READY                0x03
 #define RESP_ACK                  0x20
 #define RESP_NAK                  0x21
+
+// Detailed NAK Error Codes (for error diagnosis)
+// 这些错误代码用于区分不同类型的 NAK 原因
+#define RESP_NAK_CHECKSUM         0x22  // Checksum 错误
+#define RESP_NAK_CRC              0x23  // CRC32 错误
+#define RESP_NAK_STATE_MISMATCH   0x24  // 状态不匹配
+#define RESP_NAK_BUFFER_OVERFLOW  0x25  // 缓冲区溢出
+#define RESP_NAK_INVALID_FRAME    0x26  // 帧号超范围或长度错误
+#define RESP_NAK_FLASH_WRITE_FAIL 0x27  // Flash 写入失败
+
 #define RESP_COMPLETE             0x04
 #define RESP_FAIL                 0x05
 
@@ -42,15 +55,22 @@
 #define IMAGE_PAGES               61
 #define FRAME_PAYLOAD_SIZE        248
 
+// Conditional debug macro
+#if ENABLE_DEBUG_OUTPUT
+    #define DEBUG_PRINTF(fmt, ...) UARTIF_uartPrintf(0, fmt, ##__VA_ARGS__)
+#else
+    #define DEBUG_PRINTF(fmt, ...) do {} while(0)
+#endif
+
 /******************************************************************************
  * Types
  ******************************************************************************/
 
 typedef enum {
     RX_STATE_IDLE,
-    RX_STATE_WAITING_HEADER,
-    RX_STATE_WAITING_DATA,
-    RX_STATE_COMPLETE
+    RX_STATE_WAITING_DATA,      // Waiting for 61 data frames
+    RX_STATE_VERIFY_COMPLETE,   // All frames received, verifying
+    RX_STATE_COMPLETE           // Transfer complete
 } rx_state_t;
 
 typedef struct {
@@ -95,7 +115,7 @@ static void send_ctrl_frame(uint8_t command)
 {
     uint8_t frame[4];
     int i;
-    char *cmd_str;
+//    char *cmd_str;
 
     frame[0] = PROTO_START_MARK;
     frame[1] = command;
@@ -106,25 +126,27 @@ static void send_ctrl_frame(uint8_t command)
         Uart_SendData(UARTCH1, frame[i]);
     }
 
-    // Generate descriptive string for logging
-    switch (command) {
-        case RESP_READY:    cmd_str = "READY";    break;
-        case RESP_COMPLETE: cmd_str = "COMPLETE"; break;
-        case RESP_FAIL:     cmd_str = "FAIL";     break;
-        default:            cmd_str = "UNKNOWN";  break;
-    }
-
-    UARTIF_uartPrintf(0, "[IMG_V2] TX CTRL: %s (0x%02X)\r\n", cmd_str, command);
+    // CRITICAL: Do NOT output debug log after sending control frame
+    // It will interfere with UART protocol communication
+    // Use DEBUG_PRINTF instead which can be disabled
+    // switch (command) {
+    //     case RESP_READY:    cmd_str = "READY";    break;
+    //     case RESP_COMPLETE: cmd_str = "COMPLETE"; break;
+    //     case RESP_FAIL:     cmd_str = "FAIL";     break;
+    //     default:            cmd_str = "UNKNOWN";  break;
+    // }
+    // DEBUG_PRINTF("[IMG_V2] TX CTRL: %s (0x%02X)\r\n", cmd_str, command);
 }
 
 /**
  * @brief Send ACK/NAK response
+ * @param resp_type Response type (RESP_ACK, RESP_NAK, or detailed RESP_NAK_xxx codes)
+ * @param frame_num Frame number being acknowledged
  */
 static void send_response(uint8_t resp_type, uint16_t frame_num)
 {
     uint8_t frame[6];
     int i;
-    char *resp_str;
 
     frame[0] = PROTO_START_MARK;
     frame[1] = resp_type;
@@ -137,8 +159,10 @@ static void send_response(uint8_t resp_type, uint16_t frame_num)
         Uart_SendData(UARTCH1, frame[i]);
     }
 
-    resp_str = (resp_type == RESP_ACK) ? "ACK" : "NAK";
-    UARTIF_uartPrintf(0, "[IMG_V2] TX %s: frame=%d\r\n", resp_str, frame_num);
+    // CRITICAL: Do NOT output debug log after sending response frame
+    // It will interfere with UART protocol communication
+    // Optional debug output (only when ENABLE_DEBUG_OUTPUT=1):
+    // DEBUG_PRINTF("[IMG_V2] TX RESP: type=0x%02X, frame=%d\r\n", resp_type, frame_num);
 }
 
 /**
@@ -152,7 +176,7 @@ static uint8_t process_ctrl_frame(void)
 
     // Expected: [0x55, CMD, CHECKSUM, 0xAA]
     if (rx_ctx.frame_idx < 4) {
-        UARTIF_uartPrintf(0, "[IMG_V2_DEBUG] CTRL frame incomplete: idx=%d/4\r\n", rx_ctx.frame_idx);
+        DEBUG_PRINTF("[IMG_V2_DEBUG] CTRL frame incomplete: idx=%d/4\r\n", rx_ctx.frame_idx);
         return 0; // Not complete
     }
 
@@ -160,20 +184,20 @@ static uint8_t process_ctrl_frame(void)
     checksum = rx_ctx.frame_buf[2];
     expected_checksum = calc_checksum(&rx_ctx.frame_buf[0], 2);
 
-    UARTIF_uartPrintf(0, "[IMG_V2_DEBUG] CTRL frame check: cmd=0x%02X, checksum=%02X (expected=%02X)\r\n",
+    DEBUG_PRINTF("[IMG_V2_DEBUG] CTRL frame check: cmd=0x%02X, checksum=%02X (expected=%02X)\r\n",
                     command, checksum, expected_checksum);
 
     if (checksum != expected_checksum) {
-        UARTIF_uartPrintf(0, "[IMG_V2] ERROR CTRL checksum error: got %02X, expected %02X\r\n", checksum, expected_checksum);
+        DEBUG_PRINTF("[IMG_V2] ERROR CTRL checksum error: got %02X, expected %02X\r\n", checksum, expected_checksum);
         return 0;
     }
 
-    UARTIF_uartPrintf(0, "[IMG_V2] OK RX CTRL: cmd=0x%02X\r\n", command);
+    DEBUG_PRINTF("[IMG_V2] OK RX CTRL: cmd=0x%02X\r\n", command);
     return command;
 }
 
 /**
- * @brief Process data frame (header or image data)
+ * @brief Process data frame (image data only, no header)
  */
 static uint8_t process_data_frame(void)
 {
@@ -185,13 +209,20 @@ static uint8_t process_data_frame(void)
     uint8_t checksum_calc;
     uint8_t *payload;
     uint32_t crc_calc;
-    uint8_t magic;
     flash_result_t result;
     uint16_t data_key;
 
     // Expected: [0x55, FRAME_TYPE, FRAME_NUM_L, FRAME_NUM_H, SLOT_ID, CRC(4), PAYLOAD(248), CHECKSUM, 0xAA]
-    if (rx_ctx.frame_idx < 259) {
-        return 0; // Not complete
+    // frame_idx should be exactly 259 (including STOP_MARK)
+    if (rx_ctx.frame_idx != 259) {
+        DEBUG_PRINTF("[IMG_V2] ERROR: Frame size mismatch: idx=%d (expected=259)\r\n", rx_ctx.frame_idx);
+        // Extract frame number for NAK
+        if (rx_ctx.frame_idx >= 4) {
+            uint16_t frame_num = rx_ctx.frame_buf[2] | (rx_ctx.frame_buf[3] << 8);
+            send_response(RESP_NAK_INVALID_FRAME, frame_num);  // ✅ 详细错误代码：长度错误
+        }
+        rx_ctx.frame_idx = 0;
+        return 0; // Not valid
     }
 
     frame_type = rx_ctx.frame_buf[1];
@@ -204,8 +235,8 @@ static uint8_t process_data_frame(void)
 
     // Verify checksum
     if (checksum_rx != checksum_calc) {
-        UARTIF_uartPrintf(0, "[IMG_V2] DATA checksum error\r\n");
-        send_response(RESP_NAK, frame_num);
+        DEBUG_PRINTF("[IMG_V2] DATA checksum error: rx=0x%02X, calc=0x%02X\r\n", checksum_rx, checksum_calc);
+        send_response(RESP_NAK_CHECKSUM, frame_num);  // ✅ 详细错误代码：Checksum 错误
         rx_ctx.frame_idx = 0;
         return 0;
     }
@@ -215,8 +246,16 @@ static uint8_t process_data_frame(void)
     crc_calc = calculate_crc32_default(payload, FRAME_PAYLOAD_SIZE);
 
     if (crc_rx != crc_calc) {
-        UARTIF_uartPrintf(0, "[IMG_V2] DATA CRC error: rx=0x%08lX, calc=0x%08lX\r\n", crc_rx, crc_calc);
-        send_response(RESP_NAK, frame_num);
+        DEBUG_PRINTF("[IMG_V2] DATA CRC error: rx=0x%08lX, calc=0x%08lX\r\n", crc_rx, crc_calc);
+        send_response(RESP_NAK_CRC, frame_num);  // ✅ 详细错误代码：CRC 错误
+        rx_ctx.frame_idx = 0;
+        return 0;
+    }
+
+    // Verify frame number is valid (0-60)
+    if (frame_num > MAX_FRAME_NUM) {
+        DEBUG_PRINTF("[IMG_V2] Invalid frame_num: %d (max=%d)\r\n", frame_num, MAX_FRAME_NUM);
+        send_response(RESP_NAK_INVALID_FRAME, frame_num);  // ✅ 详细错误代码：帧号超范围
         rx_ctx.frame_idx = 0;
         return 0;
     }
@@ -225,36 +264,22 @@ static uint8_t process_data_frame(void)
     rx_ctx.current_frame_num = frame_num;
     rx_ctx.current_slot_id = slot_id;
 
-    // Determine magic based on frame type
-    magic = (frame_type == FRAME_TYPE_IMAGE_HEADER) ? MAGIC_BW_IMAGE_HEADER : MAGIC_BW_IMAGE_DATA;
+    // Write data frame to flash (magic = BW_IMAGE_DATA)
+    data_key = (uint16_t)((slot_id << 8) | frame_num);
+    result = FM_writeData(MAGIC_BW_IMAGE_DATA, data_key, payload, FRAME_PAYLOAD_SIZE);
 
-    // Write to flash
-    if (frame_type == FRAME_TYPE_IMAGE_HEADER) {
-        // Write header
-        result = FM_writeImageHeader(magic, slot_id);
-        if (result == FLASH_OK) {
-            UARTIF_uartPrintf(0, "[IMG_V2] Header saved: slot=%d\r\n", slot_id);
-            send_response(RESP_ACK, frame_num);
-        } else {
-            UARTIF_uartPrintf(0, "[IMG_V2] Header write failed: %d\r\n", result);
-            send_response(RESP_NAK, frame_num);
-        }
+    if (result == FLASH_OK) {
+        rx_ctx.frame_bitmap |= ((uint64_t)1 << frame_num);
+        rx_ctx.total_frames_received++;
+        DEBUG_PRINTF("[IMG_V2] Frame %d saved (total=%u): bitmap=0x%016llX\r\n",
+                         frame_num, rx_ctx.total_frames_received, rx_ctx.frame_bitmap);
+        send_response(RESP_ACK, frame_num);
     } else {
-        // Write data frame
-        data_key = (uint16_t)(slot_id << 8 | frame_num);
-        result = FM_writeData(magic, data_key, payload, FRAME_PAYLOAD_SIZE);
-        if (result == FLASH_OK) {
-            rx_ctx.frame_bitmap |= ((uint64_t)1 << frame_num);
-            UARTIF_uartPrintf(0, "[IMG_V2] Frame %d saved: bitmap=0x%016llX\r\n", frame_num, rx_ctx.frame_bitmap);
-            send_response(RESP_ACK, frame_num);
-        } else {
-            UARTIF_uartPrintf(0, "[IMG_V2] Frame write failed: %d\r\n", result);
-            send_response(RESP_NAK, frame_num);
-        }
+        DEBUG_PRINTF("[IMG_V2] Frame write failed: %d\r\n", result);
+        send_response(RESP_NAK_FLASH_WRITE_FAIL, frame_num);  // ✅ 详细错误代码：Flash 写入失败
     }
 
     rx_ctx.frame_idx = 0;
-    rx_ctx.total_frames_received++;
     return 1; // Frame processed
 }
 
@@ -273,119 +298,165 @@ void ImageTransferV2_Init(void)
 
 void ImageTransferV2_Process(void)
 {
-    uint8_t byte;
-    uint16_t bytes_fetched;
     uint8_t temp_buf[259];
-    uint16_t temp_idx;
-    uint16_t i;
-    uint8_t frame_type;
-    uint8_t result;
-    uint8_t cmd;
-    uint16_t expected_frames;
-    uint64_t expected_bitmap;
-    // Try to fetch data from UART queue
-    temp_idx = 0;
-    // UARTIF_uartPrintf(0, "IT\r\n");
+    uint16_t temp_idx = 0u;
+    uint16_t counter;
+    counter = UARTIF_fetchDataFromUart(temp_buf, &temp_idx);
+    if (counter > 0u)
+    {
+        UARTIF_uartPrintf(0, "counter is %d\n", counter);
+        UARTIF_uartPrintf(0, "temp_idx is %d\n", temp_idx);
+        UARTIF_uartPrintf(0, "temp_buf[0] is 0x%02x\n", temp_buf[0]);
+        UARTIF_uartPrintf(0, "temp_buf[1] is 0x%02x\n", temp_buf[1]);
+        // UARTIF_uartPrintf(0, "temp_buf[2] is 0x02%x\n", temp_buf[2]);
+        // UARTIF_uartPrintf(0, "temp_buf[temp_idx-1] is 0x02%x\n", temp_buf[temp_idx-1u]);
+        UARTIF_uartPrintf(0, "temp_buf[temp_idx-2] is 0x%02x\n", temp_buf[temp_idx-2u]);
+        UARTIF_uartPrintf(0, "temp_buf[temp_idx-1] is 0x%02x\n", temp_buf[temp_idx-1u]);
 
-    bytes_fetched = UARTIF_fetchDataFromUart(temp_buf, &temp_idx);
-
-    if (bytes_fetched == 0) {
-        rx_ctx.timeout_counter++;
-        if (rx_ctx.timeout_counter > TIMEOUT_FRAME && rx_ctx.state != RX_STATE_IDLE) {
-            UARTIF_uartPrintf(0, "[IMG_V2] TIMEOUT in state %d (counter=%u)\r\n",
-                            rx_ctx.state, rx_ctx.timeout_counter);
-            rx_ctx.timeout_counter = 0;
-        }
-        // else {
-        //     UARTIF_uartPrintf(0, "I1\r\n");
-
-        // }
-        return;
     }
 
-    // ==================== Debug: Output received data ====================
-    UARTIF_uartPrintf(0, "[IMG_V2] RX %d bytes: ", bytes_fetched);
-    for (i = 0; i < temp_idx && i < 20; i++) {
-        UARTIF_uartPrintf(0, "%02X ", temp_buf[i]);
-    }
-    if (temp_idx > 20) {
-        UARTIF_uartPrintf(0, "...");
-    }
-    UARTIF_uartPrintf(0, " [state=%d]\r\n", rx_ctx.state);
-
-    // Process fetched bytes
-    for (i = 0; i < temp_idx; i++) {
-        byte = temp_buf[i];
-
-        // Look for START_MARK
-        if (byte == PROTO_START_MARK) {
-            rx_ctx.frame_idx = 0;
-            rx_ctx.frame_buf[rx_ctx.frame_idx++] = byte;
-            rx_ctx.timeout_counter = 0;
-            continue;
-        }
-
-        // If not in frame, skip
-        if (rx_ctx.frame_idx == 0) {
-            continue;
-        }
-
-        // Add to frame
-        if (rx_ctx.frame_idx < 259) {
-            rx_ctx.frame_buf[rx_ctx.frame_idx++] = byte;
-        } else {
-            // Frame too long, reset
-            rx_ctx.frame_idx = 0;
-            continue;
-        }
-
-        // Check for STOP_MARK
-        if (byte == PROTO_STOP_MARK && rx_ctx.frame_idx >= 4) {
-            // Try to process frame
-            frame_type = rx_ctx.frame_buf[1];
-            result = 0;
-
-            if (frame_type == CMD_START || frame_type == CMD_END) {
-                cmd = process_ctrl_frame();
-                if (cmd == CMD_START) {
-                    rx_ctx.state = RX_STATE_WAITING_HEADER;
-                    send_ctrl_frame(RESP_READY);
-                    UARTIF_uartPrintf(0, "[IMG_V2] Transfer started, waiting for header...\r\n");
-                } else if (cmd == CMD_END) {
-                    rx_ctx.state = RX_STATE_COMPLETE;
-
-                    // Verify integrity: Check if all 61 frames received
-                     expected_frames = IMAGE_PAGES; // 61 frames + 1 header = 62 total
-                    if (rx_ctx.total_frames_received >= expected_frames) {
-                        // Check if frame_bitmap contains all frames (0-60)
-                         expected_bitmap = ((uint64_t)1 << IMAGE_PAGES) - 1; // All 61 bits set
-                        if ((rx_ctx.frame_bitmap & expected_bitmap) == expected_bitmap) {
-                            send_ctrl_frame(RESP_COMPLETE);
-                            UARTIF_uartPrintf(0, "[IMG_V2] OK Transfer COMPLETE! All %u frames verified\r\n",
-                                             rx_ctx.total_frames_received);
-                        } else {
-                            send_ctrl_frame(RESP_FAIL);
-                            UARTIF_uartPrintf(0, "[IMG_V2] ERROR Transfer FAILED! Missing frames. Bitmap=0x%016llX, Expected=0x%016llX\r\n",
-                                             rx_ctx.frame_bitmap, expected_bitmap);
-                        }
-                    } else {
-                        send_ctrl_frame(RESP_FAIL);
-                        UARTIF_uartPrintf(0, "[IMG_V2] ERROR Transfer FAILED! Expected %u frames, got %u\r\n",
-                                         expected_frames, rx_ctx.total_frames_received);
-                    }
-                }
-                rx_ctx.frame_idx = 0;
-            } else if (frame_type == FRAME_TYPE_IMAGE_HEADER || frame_type == FRAME_TYPE_IMAGE_DATA) {
-                if (rx_ctx.state == RX_STATE_WAITING_HEADER || rx_ctx.state == RX_STATE_WAITING_DATA) {
-                    result = process_data_frame();
-                    if (result && rx_ctx.state == RX_STATE_WAITING_HEADER) {
-                        rx_ctx.state = RX_STATE_WAITING_DATA;
-                    }
-                }
-            }
-        }
-    }
 }
+
+// void ImageTransferV2_Process(void)
+// {
+//     uint8_t byte;
+//     uint16_t bytes_fetched;
+//     uint8_t temp_buf[259];
+//     uint16_t temp_idx;
+//     uint16_t i;
+//     uint8_t frame_type;
+//     uint8_t result;
+//     uint8_t cmd;
+//     uint16_t expected_frames;
+//     uint64_t expected_bitmap;
+//     flash_result_t header_result;
+//     // Try to fetch data from UART queue
+//     temp_idx = 0;
+//     // UARTIF_uartPrintf(0, "IT\r\n");
+
+//     bytes_fetched = UARTIF_fetchDataFromUart(temp_buf, &temp_idx);
+
+//     if (bytes_fetched == 0) {
+//         rx_ctx.timeout_counter++;
+//         if (rx_ctx.timeout_counter > TIMEOUT_FRAME && rx_ctx.state != RX_STATE_IDLE) {
+//             DEBUG_PRINTF("[IMG_V2] TIMEOUT in state %d (counter=%u)\r\n",
+//                             rx_ctx.state, rx_ctx.timeout_counter);
+//             rx_ctx.timeout_counter = 0;
+//         }
+//         return;
+//     }
+
+//     // ==================== Debug: Output received data ====================
+//     // DISABLED: Debug output during data transfer can interfere with UART communication
+//     // Uncomment only for troubleshooting if needed
+//     // UARTIF_uartPrintf(0, "[IMG_V2] RX %d bytes: ", bytes_fetched);
+//     // for (i = 0; i < temp_idx && i < 20; i++) {
+//     //     UARTIF_uartPrintf(0, "%02X ", temp_buf[i]);
+//     // }
+//     // if (temp_idx > 20) {
+//     //     UARTIF_uartPrintf(0, "...");
+//     // }
+//     // UARTIF_uartPrintf(0, " [state=%d]\r\n", rx_ctx.state);
+
+//     // Process fetched bytes
+//     for (i = 0; i < temp_idx; i++) {
+//         byte = temp_buf[i];
+
+//         // Look for START_MARK
+//         if (byte == PROTO_START_MARK) {
+//             rx_ctx.frame_idx = 0;
+//             rx_ctx.frame_buf[rx_ctx.frame_idx++] = byte;
+//             rx_ctx.timeout_counter = 0;
+//             continue;
+//         }
+
+//         // If not in frame, skip
+//         if (rx_ctx.frame_idx == 0) {
+//             continue;
+//         }
+
+//         // Add to frame
+//         if (rx_ctx.frame_idx < 259) {
+//             rx_ctx.frame_buf[rx_ctx.frame_idx++] = byte;
+//         } else {
+//             // CRITICAL: Frame buffer overflow detected
+//             // This means frame was too long without STOP_MARK
+//             // Send detailed NAK to notify PC of the error
+//             DEBUG_PRINTF("[IMG_V2] ERROR: Frame buffer overflow at idx=%d, resetting\r\n", rx_ctx.frame_idx);
+
+//             // Extract frame_num if possible (need at least 4 bytes)
+//             if (rx_ctx.frame_idx >= 4) {
+//                 uint16_t frame_num = rx_ctx.frame_buf[2] | (rx_ctx.frame_buf[3] << 8);
+//                 send_response(RESP_NAK_BUFFER_OVERFLOW, frame_num);  // ✅ 详细错误代码：缓冲区溢出
+//             }
+
+//             rx_ctx.frame_idx = 0;
+//             continue;
+//         }
+
+//         // Check for STOP_MARK
+//         if (byte == PROTO_STOP_MARK && rx_ctx.frame_idx >= 4) {
+//             // Try to process frame
+//             frame_type = rx_ctx.frame_buf[1];
+//             result = 0;
+
+//             if (frame_type == CMD_START || frame_type == CMD_END) {
+//                 cmd = process_ctrl_frame();
+//                 if (cmd == CMD_START) {
+//                     // Reset state and bitmap for new transfer
+//                     rx_ctx.state = RX_STATE_WAITING_DATA;
+//                     rx_ctx.frame_bitmap = 0;
+//                     rx_ctx.total_frames_received = 0;
+//                     send_ctrl_frame(RESP_READY);
+//                     // CRITICAL: Do NOT output log after sending READY
+//                     // It will interfere with PC understanding UART protocol
+//                     // DEBUG_PRINTF("[IMG_V2] Transfer started, waiting for 61 data frames...\r\n");
+//                 } else if (cmd == CMD_END) {
+//                     rx_ctx.state = RX_STATE_VERIFY_COMPLETE;
+
+//                     // Verify integrity: Check if all 61 frames received
+//                     expected_frames = IMAGE_PAGES; // 61 frames (0-60)
+//                     expected_bitmap = ((uint64_t)1 << IMAGE_PAGES) - 1; // All 61 bits set
+
+//                     if ((rx_ctx.frame_bitmap & expected_bitmap) == expected_bitmap) {
+//                         // All frames verified! Now write image header automatically
+//                         header_result = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, rx_ctx.current_slot_id);
+
+//                         if (header_result == FLASH_OK) {
+//                             rx_ctx.state = RX_STATE_COMPLETE;
+//                             send_ctrl_frame(RESP_COMPLETE);
+//                             // CRITICAL: Do NOT output log after sending COMPLETE
+//                             // DEBUG_PRINTF("[IMG_V2] OK Transfer COMPLETE! All %u frames verified, header written (slot=%d)\r\n",
+//                             //                          rx_ctx.total_frames_received, rx_ctx.current_slot_id);
+//                         } else {
+//                             send_ctrl_frame(RESP_FAIL);
+//                             // DEBUG_PRINTF("[IMG_V2] ERROR Header write failed: %d\r\n", header_result);
+//                         }
+//                     } else {
+//                         send_ctrl_frame(RESP_FAIL);
+//                         // CRITICAL: Do NOT output log after sending FAIL
+//                         // DEBUG_PRINTF("[IMG_V2] ERROR Transfer FAILED! Missing frames. Bitmap=0x%016llX, Expected=0x%016llX\r\n",
+//                         //                         rx_ctx.frame_bitmap, expected_bitmap);
+//                     }
+//                 }
+//                 rx_ctx.frame_idx = 0;
+//             } else if (frame_type == FRAME_TYPE_IMAGE_DATA) {
+//                 if (rx_ctx.state == RX_STATE_WAITING_DATA) {
+//                     result = process_data_frame();
+//                     // Continue waiting for more frames
+//                 } else {
+//                     // CRITICAL FIX: Must send NAK if state is wrong
+//                     // Otherwise frame_idx is never reset and protocol hangs
+//                     uint16_t frame_num = rx_ctx.frame_buf[2] | (rx_ctx.frame_buf[3] << 8);
+//                     DEBUG_PRINTF("[IMG_V2] ERROR: Received data frame but state=%d (expected=%d), sending NAK\r\n",
+//                                 rx_ctx.state, RX_STATE_WAITING_DATA);
+//                     send_response(RESP_NAK_STATE_MISMATCH, frame_num);  // ✅ 详细错误代码：状态不匹配
+//                     rx_ctx.frame_idx = 0;  // CRITICAL: Reset frame buffer
+//                 }
+//             }
+//         }
+//     }
+// }
 
 /**
  * @brief Get transfer statistics

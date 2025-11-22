@@ -91,7 +91,7 @@ void Bt0Int(void)
     Bt_ClearIntFlag(TIM0);
 
     // Call passThrough and image transfer processing every 1ms
-    UARTIF_passThrough();
+    // UARTIF_passThrough();
     (void)E104_getLinkState();
 
     // High frequency image transfer processing (every 1ms)

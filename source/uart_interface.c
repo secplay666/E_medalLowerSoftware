@@ -337,10 +337,11 @@ uint16_t UARTIF_fetchDataFromUart(uint8_t *buf, uint16_t *idx)
     if (idx == NULL) return 0;
     if (buf == NULL) return 0;
 
+    // 快速提取所有队列数据，不做阻塞操作（不做echo）
+    // 这确保数据帧能在单个处理周期内完整接收
     while (!Queue_IsEmpty(&uartRecdata))
     {
         Queue_Dequeue(&uartRecdata, &byte);
-        Uart_SendData(UARTCH1, byte);
         buf[(*idx)++] = byte;
         cnt++;
     }
