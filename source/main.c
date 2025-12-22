@@ -444,22 +444,22 @@ int32_t main(void)
     }
 
     // Initialize image transfer module
-    ImageTransferV2_Init();
-    UARTIF_uartPrintf(0, "image_transfer init completely!\n");
+    // ImageTransferV2_Init();
+    // UARTIF_uartPrintf(0, "image_transfer init completely!\n");
 
-    // ==================== Debug: Test UART and Protocol ====================
-    UARTIF_uartPrintf(0, "\n");
-    UARTIF_uartPrintf(0, "===================================================\n");
-    UARTIF_uartPrintf(0, "   Image Transfer Protocol V2 - Debug Mode Started\n");
-    UARTIF_uartPrintf(0, "===================================================\n");
-    UARTIF_uartPrintf(0, "[DEBUG] MCU Ready, waiting for PC START command...\n");
-    UARTIF_uartPrintf(0, "[DEBUG] UART Baud Rate: 9600 baud\n");
-    UARTIF_uartPrintf(0, "[DEBUG] Flash Manager: %s\n", (FM_init() == FLASH_OK) ? "OK" : "FAIL");
-    UARTIF_uartPrintf(0, "[DEBUG] If START command not seen, check:\n");
-    UARTIF_uartPrintf(0, "  1. PC to MCU UART connection\n");
-    UARTIF_uartPrintf(0, "  2. Baud rate settings match\n");
-    UARTIF_uartPrintf(0, "  3. PC sent START correctly\n");
-    UARTIF_uartPrintf(0, "===================================================\n\n");
+    // // ==================== Debug: Test UART and Protocol ====================
+    // UARTIF_uartPrintf(0, "\n");
+    // UARTIF_uartPrintf(0, "===================================================\n");
+    // UARTIF_uartPrintf(0, "   Image Transfer Protocol V2 - Debug Mode Started\n");
+    // UARTIF_uartPrintf(0, "===================================================\n");
+    // UARTIF_uartPrintf(0, "[DEBUG] MCU Ready, waiting for PC START command...\n");
+    // UARTIF_uartPrintf(0, "[DEBUG] UART Baud Rate: 9600 baud\n");
+    // UARTIF_uartPrintf(0, "[DEBUG] Flash Manager: %s\n", (FM_init() == FLASH_OK) ? "OK" : "FAIL");
+    // UARTIF_uartPrintf(0, "[DEBUG] If START command not seen, check:\n");
+    // UARTIF_uartPrintf(0, "  1. PC to MCU UART connection\n");
+    // UARTIF_uartPrintf(0, "  2. Baud rate settings match\n");
+    // UARTIF_uartPrintf(0, "  3. PC sent START correctly\n");
+    // UARTIF_uartPrintf(0, "===================================================\n\n");
     // testFlashManagerReadAndWrite();
     // testFlashManagerReadAndWrite();
     // FM_forceGarbageCollect();
@@ -490,30 +490,31 @@ int32_t main(void)
     // testReadImage4();
 
     // TEST_WriteImage();
-    // DRAW_initScreen(IMAGE_BW, 0);
+    DRAW_initScreen(IMAGE_BW, 0);
 
     // DRAW_string(IMAGE_BW, 0, 10, 10, "Hello World", 3, BLACK);
     // (void)FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, 0);
 
-    // EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW,0);
+    EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW,0);
     // DRAW_initScreen(IMAGE_RED, 0);
 
     // DRAW_string(IMAGE_RED, 0, 10, 100, "Completely", 7, RED);
     // (void)FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, 0);
 
-    EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW_AND_RED,0);
+    // EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW_AND_RED,0);
 
     UARTIF_uartPrintf(0, "Goto while ! \n");
 
 
     while(1)
     {
+        UARTIF_passThrough();
         // 5ms task: image transfer processing
-        if (tg5ms)
-        {
-            tg5ms = FALSE;
-            ImageTransferV2_Process();
-        }
+        // if (tg5ms)
+        // {
+        //     tg5ms = FALSE;
+        //     ImageTransferV2_Process();
+        // }
 
         // EPD_WhiteScreenGDEY042Z98UsingFlashDate(0x000000);
         // UARTIF_uartPrintf(0, "P1! \n");

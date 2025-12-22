@@ -33,6 +33,8 @@
 #include "clk.h"
 #include "lpuart.h"
 #include "queue.h"
+#include "drawWithFlash.h"
+#include "crc.h"
 
 /******************************************************************************
  * Local pre-processor symbols/macros ('#define')                            
@@ -58,6 +60,38 @@ static Queue uartRecdata, lpUartRecdata;
 static uint8_t cmd = 0xff;
 static uint32_t uartRxCount = 0;  // 统计UART接收字节数
 static uint32_t queueOverflowCount = 0;  // 统计队列溢出次数
+
+char buffer[256]; // 假设最大字符串长度为 256
+size_t bufferIndex = 0;
+
+// 接收处理函数原型
+static void processReceivedBuffer(void);
+
+/* 软件 CRC16-CCITT (poly 0x1021, init 0xFFFF)，用于与硬件驱动结果比对 */
+static uint16_t crc16_ccitt(const uint8_t *data, uint32_t len)
+{
+    uint16_t crc = 0xFFFF;
+    uint32_t i;
+    for (i = 0; i < len; ++i)
+    {
+        crc ^= ((uint16_t)data[i]) << 8;
+        {
+            uint8_t j;
+            for (j = 0; j < 8; ++j)
+            {
+                if (crc & 0x8000u)
+                {
+                    crc = (uint16_t)((crc << 1) ^ 0x1021u);
+                }
+                else
+                {
+                    crc = (uint16_t)(crc << 1);
+                }
+            }
+        }
+    }
+    return crc;
+}
 
 /******************************************************************************
  * Local pre-processor symbols/macros ('#define')                             
@@ -181,6 +215,8 @@ void UARTIF_uartInit(void)
     //外设时钟使能
     Clk_SetPeripheralGate(ClkPeripheralBt,TRUE);//模式0/2可以不使能
     Clk_SetPeripheralGate(ClkPeripheralUart1,TRUE);
+    /* 确保 CRC 外设时钟已使能，驱动在调用时需要外设时钟 */
+    Clk_SetPeripheralGate(ClkPeripheralCrc, TRUE);
 
     stcUartIrqCb.pfnRxIrqCb = UART_rxIntCallback;
     stcUartIrqCb.pfnTxIrqCb = NULL;
@@ -317,10 +353,97 @@ void UARTIF_passThrough(void)
     {
         while (Queue_Dequeue(&lpUartRecdata, &data)) 
         {
+            /* 先回显到 UART1 */
             Uart_SendData(UARTCH1, data);
+
+            /* 检测回车或换行作为消息结束：判定为结束时不要把终止符写入缓冲区 */
+            if (data == '\r' || data == '\n')
+            {
+                /* 处理接收到的完整消息（不包含终止符，含 CRC 校验） */
+                processReceivedBuffer();
+            }
+            else
+            {
+                /* 将数据拼接到缓冲区中，保留一个位置给终止符 */
+                if (bufferIndex < sizeof(buffer) - 1)
+                {
+                    buffer[bufferIndex++] = (char)data;
+                }
+
+                /* 若缓冲区已满但未收到终止符，强制结束并处理，避免丢失数据 */
+                if (bufferIndex >= sizeof(buffer) - 1)
+                {
+                    processReceivedBuffer();
+                }
+            }
         }
         data = 0;
     }
+}
+
+/**
+ * @brief 处理接收到的缓冲区：校验 CRC16-CCITT（高字节在前），并在校验通过时输出调试信息与显示
+ */
+static void processReceivedBuffer(void)
+{
+    if (bufferIndex == 0) return;
+
+    if (bufferIndex >= 2)
+    {
+        /* 最后两个字节为 CRC，高字节在前 */
+        uint8_t high = (uint8_t)buffer[bufferIndex - 2];
+        uint8_t low = (uint8_t)buffer[bufferIndex - 1];
+        uint16_t recv_crc = ((uint16_t)high << 8) | (uint16_t)low;
+
+        /* 使用软件 CRC16-CCITT 作为主校验（高字节在前）并与硬件结果并列打印以便诊断 */
+        {
+            uint16_t sw_calc = crc16_ccitt((uint8_t *)buffer, (uint32_t)(bufferIndex - 2));
+            if (sw_calc == recv_crc)
+            {
+                /* 校验成功（软件计算通过） */
+                UARTIF_uartPrintf(0, "CRC OK: len=%d\r\n", (int)(bufferIndex - 2));
+                /* 在显示前确保字符串以 NUL 终止（覆盖 CRC 起始位置） */
+                buffer[bufferIndex - 2] = '\0';
+                DRAW_initScreen(IMAGE_BW, 0);
+                DRAW_string(IMAGE_BW, 0, 10, 10, buffer, 3, BLACK);
+                (void)FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, 0);
+                EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW,0);
+            }
+            else
+            {
+                /* 校验失败 - 使用软件计算为准，并打印软件计算值供排查（已移除硬件驱动调用） */
+                size_t i;
+                UARTIF_uartPrintf(0, "CRC ERR: recv=0x%04X calc_sw=0x%04X len=%d\r\n", recv_crc, sw_calc, (int)(bufferIndex - 2));
+                /* 打印负载十六进制 */
+                UARTIF_uartPrintf(0, "Payload HEX:");
+                for (i = 0; i < bufferIndex - 2; ++i)
+                {
+                    UARTIF_uartPrintf(0, " %02X", (uint8_t)buffer[i]);
+                    /* 每16字节换行，便于阅读 */
+                    if (((i + 1) % 16) == 0)
+                    {
+                        UARTIF_uartPrintf(0, "\r\n");
+                    }
+                }
+                UARTIF_uartPrintf(0, "\r\n");
+                /* 打印接收到的 CRC 字节 */
+                UARTIF_uartPrintf(0, "Recv CRC bytes: %02X %02X\r\n", (uint8_t)buffer[bufferIndex - 2], (uint8_t)buffer[bufferIndex - 1]);
+            }
+        }
+    }
+    else
+    {
+        /* 数据过短，无法校验，直接显示并记录 */
+        buffer[bufferIndex] = '\0';
+        UARTIF_uartPrintf(0, "No CRC: len=%d\r\n", (int)bufferIndex);
+        DRAW_initScreen(IMAGE_BW, 0);
+        DRAW_string(IMAGE_BW, 0, 10, 10, buffer, 3, BLACK);
+        (void)FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, 0);
+        EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW,0);
+    }
+
+    /* 重置缓冲区索引，准备接收下一条消息 */
+    bufferIndex = 0;
 }
 
 uint8_t UARTIF_passThroughCmd(void)
