@@ -122,6 +122,86 @@ static const unsigned char FONT_5X7[62][5] = {
 };
 static uint8_t pageBuffer[PAGE_SIZE];
 
+/* 软件 CRC16-CCITT (poly 0x1021, init 0xFFFF) */
+static uint16_t crc16_ccitt_sw(const uint8_t *data, uint32_t len)
+{
+    uint16_t crc = 0xFFFF;
+    uint32_t i;
+	  uint8_t j;
+    for (i = 0; i < len; ++i) {
+        crc ^= ((uint16_t)data[i]) << 8;
+
+        for (j = 0; j < 8; ++j) {
+            if (crc & 0x8000u) crc = (uint16_t)((crc << 1) ^ 0x1021u);
+            else crc = (uint16_t)(crc << 1);
+        }
+    }
+    return crc;
+}
+
+/**
+ * 测试接口：接受一帧数据（应包含 PAGE_SIZE 字节的数据，随后2字节 CRC 高字节/低字节），
+ * 校验通过则将该 page 写入 slot 的第 0 页，其余页写白色，并刷新电子纸显示。
+ * 输入要求：buf 长度应 >= PAGE_SIZE + 2。
+ */
+void DRAW_testWriteFirstPage(imageType_t type, uint8_t slot, const uint8_t *buf, uint32_t len)
+{
+    uint16_t id;
+    flash_result_t res;
+    uint32_t i;
+	  uint16_t recv_crc;
+	  uint16_t calc;
+
+    if (buf == NULL || len < (PAGE_SIZE + 2)) {
+        UARTIF_uartPrintf(0, "TEST: input too short len=%lu\r\n", (unsigned long)len);
+        return;
+    }
+
+    /* 复制数据页 */
+    memcpy(pageBuffer, buf, PAGE_SIZE);
+
+    /* 取接收的 CRC（高字节先） */
+    recv_crc = ((uint16_t)buf[PAGE_SIZE] << 8) | (uint16_t)buf[PAGE_SIZE + 1];
+
+    /* 计算软件 CRC */
+    calc = crc16_ccitt_sw(pageBuffer, PAGE_SIZE);
+
+    if (calc != recv_crc) {
+        UARTIF_uartPrintf(0, "TEST: CRC ERR recv=0x%04X calc=0x%04X\r\n", recv_crc, calc);
+        return;
+    }
+
+    /* 写第0页为接收的数据 */
+    id = 0 | (slot << 8);
+    res = FM_writeData((type == IMAGE_BW) ? MAGIC_BW_IMAGE_DATA : MAGIC_RED_IMAGE_DATA, id, pageBuffer, PAGE_SIZE);
+    if (res != FLASH_OK) {
+        UARTIF_uartPrintf(0, "TEST: write page0 fail id=0x%04X err=%d\r\n", id, res);
+        return;
+    }
+
+    /* 其余页写白色（0xFF） */
+    memset(pageBuffer, 0xFF, PAGE_SIZE);
+    for (i = 1; i <= MAX_FRAME_NUM; ++i) {
+        id = (uint16_t)(i | (slot << 8));
+        res = FM_writeData((type == IMAGE_BW) ? MAGIC_BW_IMAGE_DATA : MAGIC_RED_IMAGE_DATA, id, pageBuffer, PAGE_SIZE);
+        if (res != FLASH_OK) {
+            UARTIF_uartPrintf(0, "TEST: write page %lu fail id=0x%04X err=%d\r\n", (unsigned long)i, id, res);
+            return;
+        }
+    }
+
+    /* 写 header 并刷新显示 */
+    res = FM_writeImageHeader((type == IMAGE_BW) ? MAGIC_BW_IMAGE_HEADER : MAGIC_RED_IMAGE_HEADER, slot);
+    if (res != FLASH_OK) {
+        UARTIF_uartPrintf(0, "TEST: write header fail err=%d\r\n", res);
+        return;
+    }
+
+    UARTIF_uartPrintf(0, "TEST: page0 written and others white, refreshing EPD...\r\n");
+    EPD_WhiteScreenGDEY042Z98UsingFlashDate(type, slot);
+    UARTIF_uartPrintf(0, "TEST: refresh done\r\n");
+}
+
 /******************************************************************************
  * Local pre-processor symbols/macros ('#define')                             
  ******************************************************************************/

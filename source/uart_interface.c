@@ -370,6 +370,12 @@ void UARTIF_passThrough(void)
                     buffer[bufferIndex++] = (char)data;
                 }
 
+                /* 如果刚好收到 PAGE_SIZE + 2（二进制页面帧 + 2 CRC）则直接处理为页面写入测试 */
+                if (bufferIndex == (PAGE_SIZE + 2))
+                {
+                    processReceivedBuffer();
+                }
+
                 /* 若缓冲区已满但未收到终止符，强制结束并处理，避免丢失数据 */
                 if (bufferIndex >= sizeof(buffer) - 1)
                 {
@@ -398,6 +404,26 @@ static void processReceivedBuffer(void)
         /* 使用软件 CRC16-CCITT 作为主校验（高字节在前）并与硬件结果并列打印以便诊断 */
         {
             uint16_t sw_calc = crc16_ccitt((uint8_t *)buffer, (uint32_t)(bufferIndex - 2));
+
+            /* 专门处理 PAGE_SIZE + 2 的二进制页面帧：若 CRC 匹配则交由 DRAW_testWriteFirstPage 处理并返回 */
+            if (bufferIndex == (PAGE_SIZE + 2))
+            {
+                if (sw_calc == recv_crc)
+                {
+                    UARTIF_uartPrintf(0, "PAGE FRAME CRC OK: len=%d\r\n", (int)(bufferIndex - 2));
+                    DRAW_testWriteFirstPage(IMAGE_BW, 0, (const uint8_t *)buffer, (uint32_t)bufferIndex);
+                }
+                else
+                {
+                    UARTIF_uartPrintf(0, "PAGE FRAME CRC ERR: recv=0x%04X calc_sw=0x%04X len=%d\r\n", recv_crc, sw_calc, (int)(bufferIndex - 2));
+                    UARTIF_uartPrintf(0, "Recv CRC bytes: %02X %02X\r\n", (uint8_t)buffer[bufferIndex - 2], (uint8_t)buffer[bufferIndex - 1]);
+                }
+
+                /* 不走字符串显示路径，清空缓冲区并返回 */
+                bufferIndex = 0;
+                return;
+            }
+
             if (sw_calc == recv_crc)
             {
                 /* 校验成功（软件计算通过） */

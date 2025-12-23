@@ -13,6 +13,8 @@
 #define HEIGHT HEIGHT_420
 #define BYTES_PER_ROW (WIDTH / 8)
 
+#define PAGE_SIZE 248
+
 #define WHITE 1
 #define BLACK 0
 #define RED 1
@@ -61,5 +63,8 @@
 void DRAW_initScreen(imageType_t type, uint8_t slot);
 
 void DRAW_string(imageType_t type, uint8_t slot, uint16_t x, uint16_t y, const char *str, uint8_t fontSize, boolean_t color);
+
+/* Test helper: write first page from received buffer (PAGE_SIZE bytes + 2 CRC bytes) */
+void DRAW_testWriteFirstPage(imageType_t type, uint8_t slot, const uint8_t *buf, uint32_t len);
 
 #endif // SCREEN_H
