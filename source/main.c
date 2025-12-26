@@ -490,12 +490,12 @@ int32_t main(void)
     // testReadImage4();
 
     // TEST_WriteImage();
-    DRAW_initScreen(IMAGE_BW, 0);
+    // DRAW_initScreen(IMAGE_BW, 0);
 
     // DRAW_string(IMAGE_BW, 0, 10, 10, "Hello World", 3, BLACK);
     // (void)FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, 0);
 
-    EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW,0);
+    // EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW,0);
     // DRAW_initScreen(IMAGE_RED, 0);
 
     // DRAW_string(IMAGE_RED, 0, 10, 100, "Completely", 7, RED);

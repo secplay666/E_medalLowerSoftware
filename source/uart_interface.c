@@ -70,6 +70,12 @@ size_t bufferIndex = 0;
 #define MAX_PAGES_SUPPORTED 60
 static uint16_t receivedPageCount = 0;
 
+/* Frame magic for new protocol */
+#define FRAME_MAGIC_0 0xAB
+#define FRAME_MAGIC_1 0xCD
+/* 最大允许的单帧有效负载长度（安全上限） */
+#define FRAME_MAX_PAYLOAD 1024
+
 // 接收处理函数原型
 static void processReceivedBuffer(void);
 
@@ -362,32 +368,149 @@ void UARTIF_passThrough(void)
             /* 先回显到 UART1 */
             Uart_SendData(UARTCH1, data);
 
-            /* 检测回车或换行作为消息结束：判定为结束时不要把终止符写入缓冲区 */
-            if (data == '\r' || data == '\n')
-            {
-                /* 处理接收到的完整消息（不包含终止符，含 CRC 校验） */
-                processReceivedBuffer();
-            }
-            else
-            {
-                /* 将数据拼接到缓冲区中，保留一个位置给终止符 */
+            // /* 检测回车或换行作为消息结束：判定为结束时不要把终止符写入缓冲区 */
+            // if (data == '\r' || data == '\n')
+            // {
+            //     /* 处理接收到的完整消息（不包含终止符，含 CRC 校验） */
+            //     processReceivedBuffer();
+            // }
+            // else
+            // {
+                /* 将字节追加到缓冲区（不再依赖回车） */
                 if (bufferIndex < sizeof(buffer) - 1)
                 {
                     buffer[bufferIndex++] = (char)data;
                 }
 
-                /* 如果刚好收到 PAGE_SIZE + 2（二进制页面帧 + 2 CRC）则直接处理为页面写入测试 */
-                if (bufferIndex == (PAGE_SIZE + 2))
+                /* 尝试从缓冲区头部解析若干完整帧：
+                 * 帧格式：MAGIC(2B)=0xABCD | LEN(2B big-endian) | PAYLOAD(len) | CRC(2B)
+                 */
+                while (bufferIndex >= 6) /* minimal frame header */
                 {
-                    processReceivedBuffer();
-                }
+                    /* pre-declare variables to satisfy older C compilers */
+                    size_t k;
+                    uint16_t payloadLen = 0;
+                    size_t frameTotal = 0;
+                    uint16_t sw_calc = 0;
+                    uint8_t high = 0;
+                    uint8_t low = 0;
+                    uint16_t recv_crc = 0;
+                    size_t copyLen = 0;
+                    char tmp[256];
+                    uint16_t i = 0;
+                    uint16_t id = 0;
+                    flash_result_t fres = FLASH_OK;
+                    uint8_t clearBuf[PAYLOAD_SIZE];
+                    /* 查找并对齐到 MAGIC 开头 */
+                    if ((uint8_t)buffer[0] != FRAME_MAGIC_0 || (uint8_t)buffer[1] != FRAME_MAGIC_1)
+                    {
+                        k = 1;
+                        for (; k + 1 < bufferIndex; ++k)
+                        {
+                            if ((uint8_t)buffer[k] == FRAME_MAGIC_0 && (uint8_t)buffer[k+1] == FRAME_MAGIC_1) break;
+                        }
+                        if (k + 1 >= bufferIndex)
+                        {
+                            /* 未找到 MAGIC，清空缓冲区以避免无限增长 */
+                            bufferIndex = 0;
+                            break;
+                        }
+                        /* 丢弃前 k 字节并继续 */
+                        memmove(buffer, &buffer[k], bufferIndex - k);
+                        bufferIndex -= k;
+                        continue;
+                    }
 
-                /* 若缓冲区已满但未收到终止符，强制结束并处理，避免丢失数据 */
-                if (bufferIndex >= sizeof(buffer) - 1)
-                {
-                    processReceivedBuffer();
+                    /* 至少需要 4 字节以读取长度 */
+                    if (bufferIndex < 4) break;
+                    payloadLen = (((uint8_t)buffer[2]) << 8) | (uint8_t)buffer[3];
+                    if (payloadLen > FRAME_MAX_PAYLOAD)
+                    {
+                        /* 非法长度，丢弃首字节重同步 */
+                        memmove(buffer, &buffer[1], bufferIndex - 1);
+                        bufferIndex -= 1;
+                        continue;
+                    }
+
+                    frameTotal = 4 + (size_t)payloadLen + 2; /* header+len + payload + crc */
+                    if (bufferIndex < frameTotal) break; /* 等待更多字节 */
+
+                    /* 计算并比较 CRC（对 payload 计算） */
+                    sw_calc = crc16_ccitt((uint8_t *)&buffer[4], (uint32_t)payloadLen);
+                    high = (uint8_t)buffer[4 + payloadLen];
+                    low = (uint8_t)buffer[4 + payloadLen + 1];
+                    recv_crc = ((uint16_t)high << 8) | (uint16_t)low;
+
+                    if (sw_calc == recv_crc)
+                    {
+                        /* 有效帧：根据 payload 长度决定处理方式 */
+                        if (payloadLen == PAGE_SIZE)
+                        {
+                            /* 直接把 payload+CRC 交给现有的写页测试函数（len = PAGE_SIZE + 2） */
+                            DRAW_testWritePage(IMAGE_BW, 0, receivedPageCount, (const uint8_t *)&buffer[4], (uint32_t)(payloadLen + 2));
+                            if (receivedPageCount < MAX_PAGES_SUPPORTED - 1)
+                            {
+                                receivedPageCount++;
+                            }
+                            else
+                            {
+                                UARTIF_uartPrintf(0, "Reached max supported pages: %d\r\n", MAX_PAGES_SUPPORTED);
+                            }
+                        }
+                        else
+                        {
+                            /* 控制或文本消息：拷贝 payload 并以 NUL 终止便于比较 */
+                            copyLen = (payloadLen < sizeof(buffer)-1) ? payloadLen : (sizeof(buffer)-1);
+                            memcpy(tmp, &buffer[4], copyLen);
+                            tmp[copyLen] = '\0';
+                            UARTIF_uartPrintf(0, "CTRL payload received: '%s'\r\n", tmp);
+                            if (strcmp(tmp, "DISPLAY") == 0)
+                            {
+                                UARTIF_uartPrintf(0, "DISPLAY command received: rendering %d pages\r\n", (int)receivedPageCount);
+                                memset(clearBuf, 0xFF, PAYLOAD_SIZE);
+                                for (i = receivedPageCount; i <= MAX_FRAME_NUM; ++i) {
+                                    id = (uint16_t)(i | (0 << 8));
+                                    fres = FM_writeData(MAGIC_BW_IMAGE_DATA, id, clearBuf, PAYLOAD_SIZE);
+                                    if (fres != FLASH_OK) {
+                                        UARTIF_uartPrintf(0, "DISPLAY: clear page %u fail id=0x%04X err=%d\r\n", i, id, fres);
+                                    }
+                                }
+                                fres = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, 0);
+                                if (fres != FLASH_OK) {
+                                    UARTIF_uartPrintf(0, "DISPLAY: write header fail err=%d\r\n", fres);
+                                }
+                                EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW, 0);
+                                receivedPageCount = 0;
+                            }
+                            else if (strcmp(tmp, "RESET_PAGES") == 0)
+                            {
+                                UARTIF_uartPrintf(0, "RESET_PAGES command received: resetting page count\r\n");
+                                receivedPageCount = 0;
+                            }
+                            else
+                            {
+                                UARTIF_uartPrintf(0, "Ignored control payload\r\n");
+                            }
+                        }
+
+                        /* 移除已处理的完整帧并继续解析后续帧 */
+                        if (bufferIndex > frameTotal)
+                        {
+                            memmove(buffer, &buffer[frameTotal], bufferIndex - frameTotal);
+                        }
+                        bufferIndex -= frameTotal;
+                        continue;
+                    }
+                    else
+                    {
+                        /* CRC 错误：丢弃首字节并尝试重同步 */
+                        UARTIF_uartPrintf(0, "FRAME CRC ERR: recv=0x%04X calc_sw=0x%04X len=%d\r\n", recv_crc, sw_calc, (int)payloadLen);
+                        memmove(buffer, &buffer[1], bufferIndex - 1);
+                        bufferIndex -= 1;
+                        continue;
+                    }
                 }
-            }
+            // }
         }
         data = 0;
     }
