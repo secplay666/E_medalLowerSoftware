@@ -151,12 +151,18 @@ void EPD_WhiteScreenGDEY042Z98UsingFlashDate(imageType_t type, uint8_t slotId)
     {
         uint8_t storedColor = FM_getImageSlotColor(slotId);
         if (storedColor != 0xFFu) {
-            /* storedColor: 0 = BW, 1 = RED
-             * 若为 RED，则需要同时显示 BW 与 RED（IMAGE_BW_AND_RED）
-             * 若为 BW，则只显示 BW（IMAGE_BW）
+            /* storedColor: 0 = BW only, 1 = RED only, 2 = RED-BLACK COMPOSITE
+             * 若为合成(2)或RED(1)，则需要同时显示 BW 与 RED（IMAGE_BW_AND_RED）
+             * 若为BW(0)，则只显示 BW（IMAGE_BW）
              */
-            if (storedColor == 1u) type = IMAGE_BW_AND_RED;
-            else type = IMAGE_BW;
+            if (storedColor == 2u || storedColor == 1u) {
+                type = IMAGE_BW_AND_RED;
+                UARTIF_uartPrintf(0, "Auto-detected composite/red image (color=%u), using IMAGE_BW_AND_RED\r\n", storedColor);
+            }
+            else {
+                type = IMAGE_BW;
+                UARTIF_uartPrintf(0, "Auto-detected BW image (color=0), using IMAGE_BW\r\n");
+            }
         }
     }
 	spiWriteCmd(0x24);	       //Transfer BW data
@@ -181,11 +187,7 @@ void EPD_WhiteScreenGDEY042Z98UsingFlashDate(imageType_t type, uint8_t slotId)
         else 
         {
             writeBuffer(G_buffer3, PAYLOAD_SIZE);
-            // UARTIF_uartPrintf(0, " EPD: page %d data0 is 0x%02x \n", i, G_buffer3[0]);
-
         }
-        // delay1ms(1);
-        // UARTIF_uartPrintf(0, " %d cycle \n", i);
     }
 
     DC_L;

@@ -57,31 +57,16 @@ static void resetSegments(
     flash_result_t* result
 ) {
     if (reset0 && reset1) {
-        UARTIF_uartPrintf(0, "flash_manager start to init 2 sg! \n");
         *result = resetSegment(FALSE, statusMagic0, 0);
-        if (*result != FLASH_OK) {
-            UARTIF_uartPrintf(0, "ERR: flash_manager 0x05! init sg 0 error!\n");
-        }
         *result = resetSegment(TRUE, statusMagic1, 0);
-        if (*result != FLASH_OK) {
-            UARTIF_uartPrintf(0, "ERR: flash_manager 0x05! init sg 1 error!\n");
-        }
         fmCtx.activeSegmentBaseStatus = MAGIC_LOW_ACTIVE;
         fmCtx.gcInProgress = 0;
     } else if (reset0) {
-        UARTIF_uartPrintf(0, "flash_manager start to init sg 0! \n");
         *result = resetSegment(FALSE, statusMagic0, 0);
         fmCtx.activeSegmentBaseStatus = MAGIC_LOW_ACTIVE;
-        if (*result != FLASH_OK) {
-            UARTIF_uartPrintf(0, "ERR: flash_manager 0x05! init sg 0 error!\n");
-        }
     } else if (reset1) {
-        UARTIF_uartPrintf(0, "flash_manager start to init sg 1! \n");
         *result = resetSegment(TRUE, statusMagic1, 0);
         fmCtx.activeSegmentBaseStatus = MAGIC_HIGH_ACTIVE;
-        if (*result != FLASH_OK) {
-            UARTIF_uartPrintf(0, "ERR: flash_manager 0x05! init sg 1 error!\n");
-        }
     }
 }
 
@@ -104,7 +89,6 @@ static flash_result_t readSegmentHeader(uint32_t segmentBase, boolean_t isDstHea
 
     if (W25Q32_ReadData(segmentBase, G_buffer1, sizeof(segment_header_t)) != 0) 
     {
-        UARTIF_uartPrintf(0, "ERR: flash_manager 0x01! \n");
         re = FLASH_ERROR_READ_FAIL;
     }
 
@@ -120,14 +104,12 @@ static flash_result_t readSegmentHeader(uint32_t segmentBase, boolean_t isDstHea
     
     // 验证头魔法数字
     if (header->headerMagic != SEGMENT_HEADER_MAGIC) {
-        UARTIF_uartPrintf(0, "ERR: flash_manager 0x02! header magic error\n");
         header->headerMagic = 0xE0;
         re = FLASH_ERROR_INIT_FAIL;
     }
 
     if ((header->statusMagic != SEGMENT_MAGIC_ACTIVE) && (header->statusMagic != SEGMENT_MAGIC_BACKUP))
     {
-        UARTIF_uartPrintf(0, "ERR: flash_manager 0x02! header magic error\n");
         header->headerMagic = 0xE0;
         re = FLASH_ERROR_INIT_FAIL;
     }
@@ -135,14 +117,12 @@ static flash_result_t readSegmentHeader(uint32_t segmentBase, boolean_t isDstHea
     // 验证CRC32 - 只校验有效部分（不包括crc32字段）
     calculatedCrc = calculate_crc32_default(G_buffer1, 10); // headerMagic(1) + segmentId(1) + statusMagic(4) + gcCounter(4) = 10字节有效数据
     if (calculatedCrc != header->crc32) {
-        UARTIF_uartPrintf(0, "ERR: flash_manager 0x03! header crc error\n");
         header->headerMagic = 0xE0;
         re = FLASH_ERROR_CRC_FAIL;
     }
     
     if (re != FLASH_OK) 
     {
-        UARTIF_uartPrintf(0, "flash_manager read header not success! \n");
         // UARTIF_uartPrintf(0, "buffer 0 is 0x%02x! \n", G_buffer1[0]);
         // UARTIF_uartPrintf(0, "buffer 1 is 0x%02x! \n", G_buffer1[1]);
         // UARTIF_uartPrintf(0, "buffer 2 is 0x%02x! \n", G_buffer1[2]);
@@ -249,7 +229,9 @@ static void readBlock(uint8_t blockAddress)
                     }
                     else
                     {
-                        UARTIF_uartPrintf(0, "ERR: flash_manager 0x07! data id out of range\n");
+                        /* 只打印一次警告，避免刷屏 */
+                        // UARTIF_uartPrintf(0, "WARN: dataId %d out of range (max=%d) at addr 0x%06lx magic=0x%02x\n", 
+                        //                  dataId, fmCtx.entriesCountMax[magic & 0x03], addr, magic);
                     }
                 }
                 else if (magic == MAGIC_BW_IMAGE_DATA || magic == MAGIC_RED_IMAGE_DATA)
@@ -327,6 +309,8 @@ static flash_result_t scanImageDataPages(uint8_t magic, uint8_t slotId)
     uint8_t frameNum = 0;
     uint64_t frameIsFull = 0x00;
     flash_result_t re = FLASH_OK;
+    uint8_t pageMagic;
+    uint8_t pageSlotId;
 
     currentAddr = (uint32_t)((fmCtx.nextWriteAddress - 1) << 8u);
     endAddr = (fmCtx.activeSegmentBaseStatus == MAGIC_LOW_ACTIVE) ? FLASH_SEGMENT0_BASE : FLASH_SEGMENT1_BASE;
@@ -335,31 +319,36 @@ static flash_result_t scanImageDataPages(uint8_t magic, uint8_t slotId)
         memset(G_buffer1, 0, 256);
         if (W25Q32_ReadData(currentAddr, G_buffer1, 256) == 0)
         {
-            if (G_buffer1[0] == magic && G_buffer1[2] == slotId)
+            pageMagic = G_buffer1[0];
+            pageSlotId = G_buffer1[2];
+            
+            // 只要 magic 或 slotId 不匹配，立即停止扫描
+            if (pageMagic != magic || pageSlotId != slotId)
             {
-                frameNum = G_buffer1[1];
-                if ((frameIsFull & ((uint64_t)1u << frameNum)) != 0u)
-                {
-                    continue;
-                }
+                break;
+            }
+            
+            frameNum = G_buffer1[1];
+            if ((frameIsFull & ((uint64_t)1u << frameNum)) != 0u)
+            {
+                // 重复的 frame 号，跳过
+                continue;
+            }
  
-                if (frameNum > MAX_FRAME_NUM)
-                {
-                    UARTIF_uartPrintf(0, "ERR: flash_manager 0x09! image frame num out of range\n");
-                    re = FLASH_ERROR_IMAGE_FRAME_LOST;
-                    break;
-                }
-                G_imageAddressBuffer[frameNum] = (uint16_t)((currentAddr & 0x00ffff00) >> 8u);
+            if (frameNum > MAX_FRAME_NUM)
+            {
+                UARTIF_uartPrintf(0, "ERR: flash_manager 0x09! image frame num out of range: %d\n", frameNum);
+                re = FLASH_ERROR_IMAGE_FRAME_LOST;
+                break;
+            }
+            G_imageAddressBuffer[frameNum] = (uint16_t)((currentAddr & 0x00ffff00) >> 8u);
 
-                frameIsFull |= ((uint64_t)1u << frameNum);
-                if (frameIsFull == 0x1FFFFFFFFFFFFFFF)
-                {
-                    break;
-                }
-                else 
-                {
-                    // UARTIF_uartPrintf(0, "frameIsFull is 0x%016lx! \n", frameIsFull);
-                }
+
+            frameIsFull |= ((uint64_t)1u << frameNum);
+            if (frameIsFull == 0x1FFFFFFFFFFFFFFF)
+            {
+                // 所有 61 个 frame 都找到了，完成
+                break;
             }
         }
     }
@@ -367,6 +356,7 @@ static flash_result_t scanImageDataPages(uint8_t magic, uint8_t slotId)
     {
         if (frameIsFull != 0x1FFFFFFFFFFFFFFF)
         {
+            UARTIF_uartPrintf(0, "ERR: scanImageDataPages frame lost\r\n");
             re = FLASH_ERROR_IMAGE_FRAME_LOST;
         }
     }
@@ -438,17 +428,20 @@ static flash_result_t readImageHeaderIntoBuffer(uint8_t magic, uint8_t slotId)
     /* Read addresses plus one-byte color flag (if present).
      * FM_readData returns FLASH_OK only if the page exists and CRC matches.
      */
-    memset(G_buffer2, 0, FLASH_PAGE_SIZE);
+    memset(G_buffer2, 0xff, FLASH_PAGE_SIZE);
     result = FM_readData(magic, slotId, G_buffer2, (MAX_FRAME_NUM + 1) * 2 + 1);
-    if (result == FLASH_OK)
+    
+    if (result != FLASH_OK)
     {
-        /* copy addresses */
-        memcpy(G_imageAddressBuffer, G_buffer2, (MAX_FRAME_NUM + 1) * 2);
-        /* copy stored color flag if present */
-        if (slotId < MAX_IMAGE_ENTRIES)
-        {
-            fmCtx.imageSlotColor[slotId] = G_buffer2[(MAX_FRAME_NUM + 1) * 2];
-        }
+        return result;
+    }
+    
+    /* copy addresses - only copy actual valid data */
+    memcpy(G_imageAddressBuffer, G_buffer2, (MAX_FRAME_NUM + 1) * 2);
+    /* copy stored color flag if present */
+    if (slotId < MAX_IMAGE_ENTRIES)
+    {
+        fmCtx.imageSlotColor[slotId] = G_buffer2[(MAX_FRAME_NUM + 1) * 2];
     }
     return result;
 }
@@ -469,7 +462,7 @@ static flash_result_t copyPage(uint16_t srcAddr, uint16_t destAddr, boolean_t is
     {
         destAddress |= (uint32_t) (destAddr << 8u);
     }
-    UARTIF_uartPrintf(0, "Copy data from 0x%06lx to 0x%06lx! \n", srcAddress, destAddress);
+    // UARTIF_uartPrintf(0, "Copy data from 0x%06lx to 0x%06lx! \n", srcAddress, destAddress);
 
     // 读取源page
     if (result == FLASH_OK)
@@ -892,22 +885,24 @@ flash_result_t FM_init()
     }
 
     /* Populate per-slot color flags by reading existing image headers (if present) */
-    if ((result == FLASH_OK) && (needToInitList))
-    {
-        uint8_t kk;
-        uint8_t jj;
-        for (kk = 1; kk < 3; kk++)
-        {
-            for (jj = 0; jj < MAX_IMAGE_ENTRIES; jj++)
-            {
-                if (fmCtx.entries[kk][jj] != 0xffff)
-                {
-                    (void)readImageHeaderIntoBuffer((DATA_PAGE_MAGIC + kk), jj);
-                }
-            }
-        }
-    }
+    // Disabled to prevent automatic loading of image headers on boot which may trigger unwanted display updates
+    // if ((result == FLASH_OK) && (needToInitList))
+    // {
+    //     uint8_t kk;
+    //     uint8_t jj;
+    //     for (kk = 1; kk < 3; kk++)
+    //     {
+    //         for (jj = 0; jj < MAX_IMAGE_ENTRIES; jj++)
+    //         {
+    //             if (fmCtx.entries[kk][jj] != 0xffff)
+    //             {
+    //                 (void)readImageHeaderIntoBuffer((DATA_PAGE_MAGIC + kk), jj);
+    //             }
+    //         }
+    //     }
+    // }
 
+    UARTIF_uartPrintf(0, "flash_manager FM_init about to return\n");
     return result;
 }
 
@@ -982,6 +977,10 @@ flash_result_t FM_writeData(uint8_t magic, uint16_t dataId, const uint8_t* data,
         {
             result = FLASH_ERROR_WRITE_FAIL;
         }
+        else
+        {
+            // Write successful
+        }
     }
     // 更新映射表
     if (result == FLASH_OK)
@@ -989,10 +988,15 @@ flash_result_t FM_writeData(uint8_t magic, uint16_t dataId, const uint8_t* data,
         if (magic == DATA_PAGE_MAGIC || magic == MAGIC_BW_IMAGE_HEADER || magic == MAGIC_RED_IMAGE_HEADER)
         {
             fmCtx.entries[magic & 0x03][dataId] = fmCtx.nextWriteAddress;
+            if (magic == MAGIC_BW_IMAGE_HEADER || magic == MAGIC_RED_IMAGE_HEADER)
+            {
+                // UARTIF_uartPrintf(0, "FM_writeData: Updated entries[%d][%d] = 0x%04x (magic=0x%02x)\r\n", 
+                //                 magic & 0x03, dataId, fmCtx.nextWriteAddress, magic);
+            }
         }
         else if (magic == MAGIC_BW_IMAGE_DATA || magic == MAGIC_RED_IMAGE_DATA)
         {
-            // do nothing, 
+            // Image data written
         }
         else
         {
@@ -1065,7 +1069,6 @@ flash_result_t FM_readData(uint8_t magic, uint16_t dataId, uint8_t* data, uint8_
         {
             result = FLASH_ERROR_READ_FAIL;
         }
-        
     }
     
     if (result == FLASH_OK)
@@ -1143,6 +1146,8 @@ flash_result_t FM_forceGarbageCollect(void)
 flash_result_t FM_writeImageHeader(uint8_t magic, uint8_t slotId, uint8_t lastIsRed)
 {
     flash_result_t result = FLASH_OK;
+	uint16_t buf_addr1;
+	uint16_t buf_addr0;
 
     if (magic != MAGIC_BW_IMAGE_HEADER && magic != MAGIC_RED_IMAGE_HEADER)
     {
@@ -1157,7 +1162,6 @@ flash_result_t FM_writeImageHeader(uint8_t magic, uint8_t slotId, uint8_t lastIs
     if (result == FLASH_OK)
     {
         memset(G_imageAddressBuffer, 0xff, sizeof(G_imageAddressBuffer));
-        UARTIF_uartPrintf(0, "Scanning image data pages for magic %d, slot %d\n", magic, slotId);
         result = scanImageDataPages(magic + 2u, slotId);
     }
 
@@ -1165,25 +1169,20 @@ flash_result_t FM_writeImageHeader(uint8_t magic, uint8_t slotId, uint8_t lastIs
     {
         // 清空缓冲区
         memset(G_buffer2, 0, FLASH_PAGE_SIZE);
-        UARTIF_uartPrintf(0, "Writing image header for magic 0x%02x, slot %d (color=%u)\n", magic, slotId, (unsigned)lastIsRed);
         memcpy(G_buffer2, G_imageAddressBuffer, (MAX_FRAME_NUM + 1) * 2);
+        
         /* Append 1-byte color flag */
-        G_buffer2[(MAX_FRAME_NUM + 1) * 2] = (uint8_t)(lastIsRed ? 1u : 0u);
+        G_buffer2[(MAX_FRAME_NUM + 1) * 2] = (uint8_t)(lastIsRed);
         /* 写入 addresses + color flag */
         result = FM_writeData(magic, slotId, G_buffer2, (MAX_FRAME_NUM + 1) * 2 + 1);
         if (result == FLASH_OK)
         {
             if (slotId < MAX_IMAGE_ENTRIES)
             {
-                fmCtx.imageSlotColor[slotId] = (uint8_t)(lastIsRed ? 1u : 0u);
+                fmCtx.imageSlotColor[slotId] = lastIsRed;
             }
         }
     }
-    if (result != FLASH_OK)
-    {
-        UARTIF_uartPrintf(0, "Write image header fail! error code is %d \n", result);
-    }
-
     return result;
 }
 
@@ -1196,6 +1195,8 @@ flash_result_t FM_readImage(uint8_t magic, uint8_t slotId, uint8_t frameNum, uin
     static uint8_t lastSlotIdInBuffer = 0xff;
     flash_result_t result = FLASH_OK;
     uint16_t dataId = 0;
+	uint8_t entriesIndex;
+	uint16_t headerAddr;
 
     if (magic != MAGIC_BW_IMAGE_DATA && magic != MAGIC_RED_IMAGE_DATA)
     {
@@ -1215,7 +1216,10 @@ flash_result_t FM_readImage(uint8_t magic, uint8_t slotId, uint8_t frameNum, uin
         if (magic != lastMagicInBuffer || slotId != lastSlotIdInBuffer)
         {
             memset(G_imageAddressBuffer, 0xff, sizeof(G_imageAddressBuffer));
-            if (fmCtx.entries[(magic - 2u) & 0x03][slotId] == 0xffff)
+            entriesIndex = (magic - 2u) & 0x03;
+            headerAddr = fmCtx.entries[entriesIndex][slotId];
+            // UARTIF_uartPrintf(0, "FM_readImage: magic=0x%02x idx=%d hdr=0x%04x\r\n", magic, entriesIndex, headerAddr);
+            if (headerAddr == 0xffff)
             {
                 result = FLASH_ERROR_NOT_FOUND;
             }
@@ -1237,6 +1241,14 @@ flash_result_t FM_readImage(uint8_t magic, uint8_t slotId, uint8_t frameNum, uin
         dataId = dataId << 8u;
         dataId |= (uint16_t)frameNum;
         result = FM_readData(magic, dataId, data, PAYLOAD_SIZE);
+        if (result != FLASH_OK)
+        {
+            // if (frameNum == 0) UARTIF_uartPrintf(0, "FM_readImage DATA: magic=0x%02x err=%d\r\n", magic, result);
+        }
+        else if (frameNum == 0)
+        {
+            // UARTIF_uartPrintf(0, "FM_readImage DATA OK: magic=0x%02x byte[0]=0x%02x\r\n", magic, data[0]);
+        }
     }
 
     return result;

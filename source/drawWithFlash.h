@@ -68,4 +68,9 @@ void DRAW_string(imageType_t type, uint8_t slot, uint16_t x, uint16_t y, const c
 	pageIndex: flash page index within the image slot */
 void DRAW_testWritePage(imageType_t type, uint8_t slot, uint16_t pageIndex, const uint8_t *buf, uint32_t len);
 
+/* Quick composite image test: writes RED+BW test patterns directly to flash without UART data transfer
+   Useful for rapid debugging without sending 122 data pages
+   Usage: send "TEST_COMPOSITE" command to trigger this test */
+void DRAW_testCompositeQuick(uint8_t slot);
+
 #endif // SCREEN_H

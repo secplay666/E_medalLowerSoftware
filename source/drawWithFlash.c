@@ -148,42 +148,72 @@ static uint16_t crc16_ccitt_sw(const uint8_t *data, uint32_t len)
  * 写入一页数据到指定的 flash page（不刷新显示）
  * 注意：len 应 >= PAGE_SIZE + 2（PAGE_SIZE 字节数据 + 2 字节 CRC）
  */
-void DRAW_testWritePage(imageType_t type, uint8_t slot, uint16_t pageIndex, const uint8_t *buf, uint32_t len)
+// void DRAW_testWritePage(imageType_t type, uint8_t slot, uint16_t pageIndex, const uint8_t *buf, uint32_t len)
+// {
+//     uint16_t id;
+//     flash_result_t res;
+//     uint32_t i;
+//     uint16_t recv_crc;
+//     uint16_t calc;
+
+//     if (buf == NULL || len < (PAGE_SIZE + 2)) {
+//         UARTIF_uartPrintf(0, "TEST: input too short len=%lu\r\n", (unsigned long)len);
+//         return;
+//     }
+
+//     /* 复制数据页 */
+//     memcpy(pageBuffer, buf, PAGE_SIZE);
+
+//     /* 取接收的 CRC（高字节先） */
+//     recv_crc = ((uint16_t)buf[PAGE_SIZE] << 8) | (uint16_t)buf[PAGE_SIZE + 1];
+
+//     /* 计算软件 CRC */
+//     calc = crc16_ccitt_sw(pageBuffer, PAGE_SIZE);
+
+//     if (calc != recv_crc) {
+//         UARTIF_uartPrintf(0, "TEST: CRC ERR recv=0x%04X calc=0x%04X\r\n", recv_crc, calc);
+//         return;
+//     }
+
+//     /* 写入指定 pageIndex（只写本页，不触发刷新，也不清空其它页） */
+//     id = (uint16_t)(pageIndex | (slot << 8));
+//     res = FM_writeData((type == IMAGE_BW) ? MAGIC_BW_IMAGE_DATA : MAGIC_RED_IMAGE_DATA, id, pageBuffer, PAGE_SIZE);
+//     if (res != FLASH_OK) {
+//         UARTIF_uartPrintf(0, "TEST: write page fail id=0x%04X err=%d\r\n", id, res);
+//         return;
+//     }
+
+//     UARTIF_uartPrintf(0, "TEST: write page %u ok id=0x%04X\r\n", pageIndex, id);
+// }
+
+/**
+ * @brief 快速测试：不需要通过UART发送数据包，直接写入RED+BW合成图像到flash并显示
+ */
+void DRAW_testCompositeQuick(uint8_t slot)
 {
-    uint16_t id;
-    flash_result_t res;
-    uint32_t i;
-    uint16_t recv_crc;
-    uint16_t calc;
-
-    if (buf == NULL || len < (PAGE_SIZE + 2)) {
-        UARTIF_uartPrintf(0, "TEST: input too short len=%lu\r\n", (unsigned long)len);
-        return;
+    uint16_t i, j, id;
+    
+    /* 测试：调换顺序，先写BW，后写RED */
+    
+    /* Write BW layer (0x55 pattern) - 先写 */
+    for (j = 0; j < PAGE_SIZE; j++) pageBuffer[j] = 0x55;
+    for (i = 0; i <= MAX_FRAME_NUM; i++)
+    {
+        id = (uint16_t)(i | (slot << 8));
+        if (FM_writeData(MAGIC_BW_IMAGE_DATA, id, pageBuffer, PAGE_SIZE) != FLASH_OK) return;
     }
-
-    /* 复制数据页 */
-    memcpy(pageBuffer, buf, PAGE_SIZE);
-
-    /* 取接收的 CRC（高字节先） */
-    recv_crc = ((uint16_t)buf[PAGE_SIZE] << 8) | (uint16_t)buf[PAGE_SIZE + 1];
-
-    /* 计算软件 CRC */
-    calc = crc16_ccitt_sw(pageBuffer, PAGE_SIZE);
-
-    if (calc != recv_crc) {
-        UARTIF_uartPrintf(0, "TEST: CRC ERR recv=0x%04X calc=0x%04X\r\n", recv_crc, calc);
-        return;
+    if (FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, slot, 0u) != FLASH_OK) return;
+    
+    /* Write RED layer (0xAA pattern) - 后写 */
+    for (j = 0; j < PAGE_SIZE; j++) pageBuffer[j] = 0x55;
+    for (i = 0; i <= MAX_FRAME_NUM; i++)
+    {
+        id = (uint16_t)(i | (slot << 8));
+        if (FM_writeData(MAGIC_RED_IMAGE_DATA, id, pageBuffer, PAGE_SIZE) != FLASH_OK) return;
     }
-
-    /* 写入指定 pageIndex（只写本页，不触发刷新，也不清空其它页） */
-    id = (uint16_t)(pageIndex | (slot << 8));
-    res = FM_writeData((type == IMAGE_BW) ? MAGIC_BW_IMAGE_DATA : MAGIC_RED_IMAGE_DATA, id, pageBuffer, PAGE_SIZE);
-    if (res != FLASH_OK) {
-        UARTIF_uartPrintf(0, "TEST: write page fail id=0x%04X err=%d\r\n", id, res);
-        return;
-    }
-
-    UARTIF_uartPrintf(0, "TEST: write page %u ok id=0x%04X\r\n", pageIndex, id);
+    if (FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, slot, 1u) != FLASH_OK) return;
+    
+    EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW_AND_RED, slot);
 }
 
 /******************************************************************************
