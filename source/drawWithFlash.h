@@ -13,6 +13,8 @@
 #define HEIGHT HEIGHT_420
 #define BYTES_PER_ROW (WIDTH / 8)
 
+#define PAGE_SIZE 248
+
 #define WHITE 1
 #define BLACK 0
 #define RED 1
@@ -61,5 +63,14 @@
 void DRAW_initScreen(imageType_t type, uint8_t slot);
 
 void DRAW_string(imageType_t type, uint8_t slot, uint16_t x, uint16_t y, const char *str, uint8_t fontSize, boolean_t color);
+
+/* Test helper: write one flash page from received buffer (PAGE_SIZE bytes + 2 CRC bytes)
+	pageIndex: flash page index within the image slot */
+void DRAW_testWritePage(imageType_t type, uint8_t slot, uint16_t pageIndex, const uint8_t *buf, uint32_t len);
+
+/* Quick composite image test: writes RED+BW test patterns directly to flash without UART data transfer
+   Useful for rapid debugging without sending 122 data pages
+   Usage: send "TEST_COMPOSITE" command to trigger this test */
+void DRAW_testCompositeQuick(uint8_t slot);
 
 #endif // SCREEN_H

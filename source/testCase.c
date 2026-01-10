@@ -295,7 +295,7 @@ void TEST_WriteImage4(void)
 
         if (result == FLASH_OK)
         {
-            result = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, j);
+            result = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, j, 0u);
         }
 
         if (result == FLASH_OK)
@@ -329,7 +329,7 @@ void TEST_WriteImage4(void)
 
         if (result == FLASH_OK)
         {
-            result = FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, j);
+            result = FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, j, 1u);
         }
 
         if (result == FLASH_OK)
@@ -489,7 +489,7 @@ void TEST_WriteImage(void)
 
     if (result == FLASH_OK)
     {
-        result = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, 0x01);
+        result = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, 0x01, 0u);
     }
 
     if (result == FLASH_OK)

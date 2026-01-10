@@ -531,7 +531,9 @@ void ImageTransfer_Process(void)
                 if (frameIsFull == 0x1FFFFFFFFFFFFF) // 61页全满 (bits 0-60)
                 {
                     debugPrint("All frames received! Writing header...");
-                    re = FM_writeImageHeader(lastImageMagic - 2u, lastSlotId);
+                    /* pass color flag inferred from lastImageMagic (data magic) */
+                    re = FM_writeImageHeader(lastImageMagic - 2u, lastSlotId,
+                                             (lastImageMagic == MAGIC_RED_IMAGE_DATA) ? 1u : 0u);
                     if (re != FLASH_OK)
                     {
                         UARTIF_uartPrintf(0, "[IMG_DBG] Header write error: %d\r\n", re);

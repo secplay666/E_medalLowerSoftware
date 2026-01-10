@@ -122,6 +122,100 @@ static const unsigned char FONT_5X7[62][5] = {
 };
 static uint8_t pageBuffer[PAGE_SIZE];
 
+/* 软件 CRC16-CCITT (poly 0x1021, init 0xFFFF) */
+static uint16_t crc16_ccitt_sw(const uint8_t *data, uint32_t len)
+{
+    uint16_t crc = 0xFFFF;
+    uint32_t i;
+	  uint8_t j;
+    for (i = 0; i < len; ++i) {
+        crc ^= ((uint16_t)data[i]) << 8;
+
+        for (j = 0; j < 8; ++j) {
+            if (crc & 0x8000u) crc = (uint16_t)((crc << 1) ^ 0x1021u);
+            else crc = (uint16_t)(crc << 1);
+        }
+    }
+    return crc;
+}
+
+/**
+ * 测试接口：接受一帧数据（应包含 PAGE_SIZE 字节的数据，随后2字节 CRC 高字节/低字节），
+ * 校验通过则将该 page 写入 slot 的第 0 页，其余页写白色，并刷新电子纸显示。
+ * 输入要求：buf 长度应 >= PAGE_SIZE + 2。
+ */
+/**
+ * 写入一页数据到指定的 flash page（不刷新显示）
+ * 注意：len 应 >= PAGE_SIZE + 2（PAGE_SIZE 字节数据 + 2 字节 CRC）
+ */
+// void DRAW_testWritePage(imageType_t type, uint8_t slot, uint16_t pageIndex, const uint8_t *buf, uint32_t len)
+// {
+//     uint16_t id;
+//     flash_result_t res;
+//     uint32_t i;
+//     uint16_t recv_crc;
+//     uint16_t calc;
+
+//     if (buf == NULL || len < (PAGE_SIZE + 2)) {
+//         UARTIF_uartPrintf(0, "TEST: input too short len=%lu\r\n", (unsigned long)len);
+//         return;
+//     }
+
+//     /* 复制数据页 */
+//     memcpy(pageBuffer, buf, PAGE_SIZE);
+
+//     /* 取接收的 CRC（高字节先） */
+//     recv_crc = ((uint16_t)buf[PAGE_SIZE] << 8) | (uint16_t)buf[PAGE_SIZE + 1];
+
+//     /* 计算软件 CRC */
+//     calc = crc16_ccitt_sw(pageBuffer, PAGE_SIZE);
+
+//     if (calc != recv_crc) {
+//         UARTIF_uartPrintf(0, "TEST: CRC ERR recv=0x%04X calc=0x%04X\r\n", recv_crc, calc);
+//         return;
+//     }
+
+//     /* 写入指定 pageIndex（只写本页，不触发刷新，也不清空其它页） */
+//     id = (uint16_t)(pageIndex | (slot << 8));
+//     res = FM_writeData((type == IMAGE_BW) ? MAGIC_BW_IMAGE_DATA : MAGIC_RED_IMAGE_DATA, id, pageBuffer, PAGE_SIZE);
+//     if (res != FLASH_OK) {
+//         UARTIF_uartPrintf(0, "TEST: write page fail id=0x%04X err=%d\r\n", id, res);
+//         return;
+//     }
+
+//     UARTIF_uartPrintf(0, "TEST: write page %u ok id=0x%04X\r\n", pageIndex, id);
+// }
+
+/**
+ * @brief 快速测试：不需要通过UART发送数据包，直接写入RED+BW合成图像到flash并显示
+ */
+void DRAW_testCompositeQuick(uint8_t slot)
+{
+    uint16_t i, j, id;
+    
+    /* 测试：调换顺序，先写BW，后写RED */
+    
+    /* Write BW layer (0x55 pattern) - 先写 */
+    for (j = 0; j < PAGE_SIZE; j++) pageBuffer[j] = 0x55;
+    for (i = 0; i <= MAX_FRAME_NUM; i++)
+    {
+        id = (uint16_t)(i | (slot << 8));
+        if (FM_writeData(MAGIC_BW_IMAGE_DATA, id, pageBuffer, PAGE_SIZE) != FLASH_OK) return;
+    }
+    if (FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, slot, 0u) != FLASH_OK) return;
+    
+    /* Write RED layer (0xAA pattern) - 后写 */
+    for (j = 0; j < PAGE_SIZE; j++) pageBuffer[j] = 0x55;
+    for (i = 0; i <= MAX_FRAME_NUM; i++)
+    {
+        id = (uint16_t)(i | (slot << 8));
+        if (FM_writeData(MAGIC_RED_IMAGE_DATA, id, pageBuffer, PAGE_SIZE) != FLASH_OK) return;
+    }
+    if (FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, slot, 1u) != FLASH_OK) return;
+    
+    EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW_AND_RED, slot);
+}
+
 /******************************************************************************
  * Local pre-processor symbols/macros ('#define')                             
  ******************************************************************************/
@@ -170,7 +264,7 @@ void DRAW_initScreen(imageType_t type, uint8_t slot)
 
     if (result == FLASH_OK)
     {
-        result = FM_writeImageHeader(headerMagic, slot);
+        result = FM_writeImageHeader(headerMagic, slot, (headerMagic == MAGIC_RED_IMAGE_HEADER) ? 1u : 0u);
     }
 
     if (result == FLASH_OK)
