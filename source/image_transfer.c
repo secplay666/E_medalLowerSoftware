@@ -532,8 +532,7 @@ void ImageTransfer_Process(void)
                 {
                     debugPrint("All frames received! Writing header...");
                     /* pass color flag inferred from lastImageMagic (data magic) */
-                    re = FM_writeImageHeader(lastImageMagic - 2u, lastSlotId,
-                                             (lastImageMagic == MAGIC_RED_IMAGE_DATA) ? 1u : 0u);
+                    re = FM_writeImageHeader(lastImageMagic - 2u, lastSlotId);
                     if (re != FLASH_OK)
                     {
                         UARTIF_uartPrintf(0, "[IMG_DBG] Header write error: %d\r\n", re);

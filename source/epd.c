@@ -142,43 +142,43 @@ void EPD_UpdateGDEY042Z98ALL_fast(void)
 }
 
 
-void EPD_WhiteScreenGDEY042Z98UsingFlashDate(imageType_t type, uint8_t slotId)
+void EPD_WhiteScreenGDEY042Z98UsingFlashDate(uint8_t slotId)
 {
     unsigned int i;
 //    unsigned int j;
     flash_result_t result;
     /* 优先使用 flash header 存储的颜色标志（若已知），以自动选择显示通道 */
-    {
-        uint8_t storedColor = FM_getImageSlotColor(slotId);
-        if (storedColor != 0xFFu) {
-            /* storedColor: 0 = BW only, 1 = RED only, 2 = RED-BLACK COMPOSITE
-             * 若为合成(2)或RED(1)，则需要同时显示 BW 与 RED（IMAGE_BW_AND_RED）
-             * 若为BW(0)，则只显示 BW（IMAGE_BW）
-             */
-            if (storedColor == 2u || storedColor == 1u) {
-                type = IMAGE_BW_AND_RED;
-                UARTIF_uartPrintf(0, "Auto-detected composite/red image (color=%u), using IMAGE_BW_AND_RED\r\n", storedColor);
-            }
-            else {
-                type = IMAGE_BW;
-                UARTIF_uartPrintf(0, "Auto-detected BW image (color=0), using IMAGE_BW\r\n");
-            }
-        }
-    }
+    // {
+    //     uint8_t storedColor = FM_getImageSlotColor(slotId);
+    //     if (storedColor != 0xFFu) {
+    //         /* storedColor: 0 = BW only, 1 = RED only, 2 = RED-BLACK COMPOSITE
+    //          * 若为合成(2)或RED(1)，则需要同时显示 BW 与 RED（IMAGE_BW_AND_RED）
+    //          * 若为BW(0)，则只显示 BW（IMAGE_BW）
+    //          */
+    //         if (storedColor == 2u || storedColor == 1u) {
+    //             type = IMAGE_BW_AND_RED;
+    //             UARTIF_uartPrintf(0, "Auto-detected composite/red image (color=%u), using IMAGE_BW_AND_RED\r\n", storedColor);
+    //         }
+    //         else {
+    //             type = IMAGE_BW;
+    //             UARTIF_uartPrintf(0, "Auto-detected BW image (color=0), using IMAGE_BW\r\n");
+    //         }
+    //     }
+    // }
 	spiWriteCmd(0x24);	       //Transfer BW data
     DC_H;
     for (i = 0; i <= MAX_FRAME_NUM; i++)
     {
         memset(G_buffer3, 0xff, BUFFER_SIZE);
-        if (type == IMAGE_BW || type == IMAGE_BW_AND_RED)
-        {
+        // if (type == IMAGE_BW || type == IMAGE_BW_AND_RED)
+        // {
             result = FM_readImage(MAGIC_BW_IMAGE_DATA, slotId, i, G_buffer3);
             if (result != FLASH_OK)
             {
                 UARTIF_uartPrintf(0, "Flash write image data id 0x%02x page 0x%02x fail! error code is %d \n", slotId, i, result);
                 memset(G_buffer3, 0xff, BUFFER_SIZE);
             }
-        }
+        // }
         delay1ms(1);
         if (i == MAX_FRAME_NUM)
         {
@@ -199,8 +199,8 @@ void EPD_WhiteScreenGDEY042Z98UsingFlashDate(imageType_t type, uint8_t slotId)
     for (i = 0; i <= MAX_FRAME_NUM; i++)
     {
         memset(G_buffer3, 0, BUFFER_SIZE);
-        if (type == IMAGE_RED || type == IMAGE_BW_AND_RED)
-        {
+        // if (type == IMAGE_RED || type == IMAGE_BW_AND_RED)
+        // {
             result = FM_readImage(MAGIC_RED_IMAGE_DATA, slotId, i, G_buffer3);
 
             if (result != FLASH_OK)
@@ -208,7 +208,7 @@ void EPD_WhiteScreenGDEY042Z98UsingFlashDate(imageType_t type, uint8_t slotId)
                 UARTIF_uartPrintf(0, "Flash write image data id 0x%02x page 0x%02x fail! error code is %d \n", slotId, i, result);
                 memset(G_buffer3, 0, BUFFER_SIZE);
             }
-        }
+        // }
         delay1ms(1);
         if (i == MAX_FRAME_NUM)
         {

@@ -27,7 +27,7 @@ void EPD_initGDEY042Z98(void);
 void EPD_WhiteScreenGDEY042Z98ALLBlack(void);
 void EPD_WhiteScreenGDEY042Z98ALLWrite(void);
 void EPD_WhiteScreenGDEY042Z98ALLRed(void);
-void EPD_WhiteScreenGDEY042Z98UsingFlashDate(imageType_t type, uint8_t slotId);
+void EPD_WhiteScreenGDEY042Z98UsingFlashDate(uint8_t slotId);
 
 
 #endif // EPD_H

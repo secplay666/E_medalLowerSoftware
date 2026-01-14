@@ -65,7 +65,7 @@ typedef struct {
     uint16_t dataEntries[MAX_DATA_ENTRIES]; // 数据映射表
     uint16_t imageBwEntries[MAX_IMAGE_ENTRIES]; // 数据映射表
     uint16_t imageRedEntries[MAX_IMAGE_ENTRIES]; // 数据映射表
-    uint8_t imageSlotColor[MAX_IMAGE_ENTRIES]; // 每个槽的颜色标志：0 = BW, 1 = RED, 0xFF = 未知
+    //uint8_t imageSlotColor[MAX_IMAGE_ENTRIES]; // 每个槽的颜色标志：0 = BW, 1 = RED, 0xFF = 未知
     segment_header_t header0;
     segment_header_t header1;
     uint16_t* entries[3u]; // 0 - dataEntries, 1 - imageBwEntries, 2 - imageRedEntries
@@ -135,14 +135,14 @@ flash_result_t FM_forceGarbageCollect(void);
  * @param slotId 数据ID
  * @return flash_result_t 操作结果
  */
-flash_result_t FM_writeImageHeader(uint8_t magic, uint8_t slotId, uint8_t lastIsRed);
+flash_result_t FM_writeImageHeader(uint8_t magic, uint8_t slotId);
 
-/**
- * @brief 获取图像槽位存储的颜色标志
- * @param slotId 槽位编号
- * @return 0 = BW, 1 = RED, 0xFF = 未知/未初始化
- */
-uint8_t FM_getImageSlotColor(uint8_t slotId);
+// /**
+//  * @brief 获取图像槽位存储的颜色标志
+//  * @param slotId 槽位编号
+//  * @return 0 = BW, 1 = RED, 0xFF = 未知/未初始化
+//  */
+// uint8_t FM_getImageSlotColor(uint8_t slotId);
 
 /**
  * @brief 读取图像数据页

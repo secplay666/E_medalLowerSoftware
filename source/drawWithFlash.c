@@ -202,7 +202,7 @@ void DRAW_testCompositeQuick(uint8_t slot)
         id = (uint16_t)(i | (slot << 8));
         if (FM_writeData(MAGIC_BW_IMAGE_DATA, id, pageBuffer, PAGE_SIZE) != FLASH_OK) return;
     }
-    if (FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, slot, 0u) != FLASH_OK) return;
+    if (FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, slot) != FLASH_OK) return;
     
     /* Write RED layer (0xAA pattern) - 后写 */
     for (j = 0; j < PAGE_SIZE; j++) pageBuffer[j] = 0x55;
@@ -211,9 +211,9 @@ void DRAW_testCompositeQuick(uint8_t slot)
         id = (uint16_t)(i | (slot << 8));
         if (FM_writeData(MAGIC_RED_IMAGE_DATA, id, pageBuffer, PAGE_SIZE) != FLASH_OK) return;
     }
-    if (FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, slot, 1u) != FLASH_OK) return;
+    if (FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, slot) != FLASH_OK) return;
     
-    EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW_AND_RED, slot);
+    EPD_WhiteScreenGDEY042Z98UsingFlashDate(slot);
 }
 
 /******************************************************************************
@@ -264,7 +264,7 @@ void DRAW_initScreen(imageType_t type, uint8_t slot)
 
     if (result == FLASH_OK)
     {
-        result = FM_writeImageHeader(headerMagic, slot, (headerMagic == MAGIC_RED_IMAGE_HEADER) ? 1u : 0u);
+        result = FM_writeImageHeader(headerMagic, slot);
     }
 
     if (result == FLASH_OK)
