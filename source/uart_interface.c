@@ -510,6 +510,7 @@ void UARTIF_passThrough(void)
 
                     flags = (uint8_t)buffer[2];
                     payloadLen = (((uint8_t)buffer[3]) << 8) | (uint8_t)buffer[4];
+                    
                     isCompressed = flags & 0x01;
                     /* flags bit1 (0x02) 用于指示颜色：0=黑色，1=红色 */
                     isRed = (flags & 0x02) ? 1u : 0u;
@@ -541,7 +542,17 @@ void UARTIF_passThrough(void)
                                                          decompressBuffer, PAGE_SIZE);
 
                             if (finalLen == 0) {
-                                UARTIF_uartPrintf(0, "RLE decompress FAILED\r\n");
+                                UARTIF_uartPrintf(0, "RLE decompress FAILED: payloadLen=%u\r\n", payloadLen);
+                                /* 丢弃此帧 */
+                                if (bufferIndex > frameTotal) {
+                                    memmove(buffer, &buffer[frameTotal], bufferIndex - frameTotal);
+                                }
+                                bufferIndex -= frameTotal;
+                                continue;
+                            }
+                            
+                            if (finalLen != PAGE_SIZE) {
+                                UARTIF_uartPrintf(0, "RLE decompress size mismatch: got %u expected %u\r\n", (unsigned)finalLen, (unsigned)PAGE_SIZE);
                                 /* 丢弃此帧 */
                                 if (bufferIndex > frameTotal) {
                                     memmove(buffer, &buffer[frameTotal], bufferIndex - frameTotal);
@@ -585,6 +596,8 @@ void UARTIF_passThrough(void)
                              */
                             fres = FM_writeData(dataMagic, id, pData, PAGE_SIZE);
                             if (fres == FLASH_OK) {
+                                UARTIF_uartPrintf(0, "Page %u written OK, flags=0x%02X isCompressed=%u\r\n", 
+                                                  receivedPageCount, flags, isCompressed);
                                 /* Page written OK */
                                 /* 颜色已在写入前根据第一包的 flags 处理 */
                                 /* 如果这是最后一页（frame == MAX_FRAME_NUM），则视为本张图片接收完成，写入 image header 并清空对侧通道（不触发显示） */
