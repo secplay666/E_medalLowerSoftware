@@ -47,6 +47,7 @@
 // #include "testCase.h"
 #include <stdlib.h>
 
+#include "interrupts_hc32l110.h"
 /******************************************************************************
  * Local pre-processor symbols/macros ('#define')                            
  ******************************************************************************/
@@ -86,9 +87,194 @@ static volatile boolean_t tg8s = FALSE;
 uint8_t cmd[3] = {0xAC,0x33,0x00};
 uint8_t u8Recdata[8]={0x00};
 
-void Bt0Int(void)
+
+//编码器部分
+typedef struct {
+    uint8_t u8Port;
+    uint8_t u8Pin;
+}stc_gpio_list_t;
+
+const stc_gpio_list_t gGpiolist[] =
+{
+    /*{ 0, 0 }, */{ 0, 1 }, { 0, 2 }, /*{ 0, 3 },*/
+    { 1, 4 }, { 1, 5 },
+    { 2, 3 }, { 2, 4 }, { 2, 5 }, { 2, 6 },
+    { 2, 7 },
+    { 3, 1 },
+    { 3, 2 }, { 3, 3 }, { 3, 4 }, { 3, 5 }, { 3, 6 },
+};
+
+// 临时测试：中断频率测试计数
+static volatile uint32_t g_u32TestInterruptCount = 0;
+
+// 编码器计数结构体
+typedef struct {
+    int32_t i32Count;              // 计数值（支持正负）
+    uint8_t u8LastStateA;          // P26(A相)上次状态
+    uint8_t u8LastStateB;          // P25(B相)上次状态
+    int8_t i8Direction;            // 旋转方向：1=正向，-1=反向，0=未动
+    // uint32_t u32LastInterruptTime; // 上次中断时间（用于防抖）
+}stc_encoder_t;
+
+// 全局编码器变量
+// volatile stc_encoder_t g_stcEncoder = {0, 0, 0, 0, 0};
+volatile stc_encoder_t g_stcEncoder = {0, 0, 0, 0};
+volatile uint32_t g_u32InterruptCount = 0;  // 中断计数器
+volatile uint32_t g_u32SystemTick = 0;     // 系统节拍（毫秒）
+
+// 图像显示相关
+volatile uint8_t g_u8CurrentImageSlot = 1;  // 当前图像槽位，范围1-8
+volatile int8_t g_i8LastDirection = 0;      // 上次方向
+volatile uint8_t g_u8DirectionConfirmCount = 0;  // 连续相同方向计数（需要2次）
+
+void gpio_init(void)
+{
+    boolean_t initState;
+    UARTIF_uartPrintf(0, "=== GPIO初始化开始 ===\n");
+    UARTIF_uartPrintf(0, "配置编码器: P26(A相) + P25(B相)\n");
+    
+    // 配置P26(A相)为中断输入端口，上升沿触发
+    Gpio_InitIOExt(2, 6, GpioDirIn, TRUE, FALSE, FALSE, 0);
+    UARTIF_uartPrintf(0, "P26(A相) 上升沿中断配置完成\n");
+    
+    Gpio_ClearIrq(2, 6);
+    Gpio_EnableIrq(2, 6, GpioIrqRising);  // 上升沿触发
+    UARTIF_uartPrintf(0, "P26(A相) 中断使能完成\n");
+    
+    // 配置P25(B相)为普通输入端口（用于读取状态判断方向）
+    Gpio_InitIO(2, 5, GpioDirIn);
+    UARTIF_uartPrintf(0, "P25(B相) 配置为输入完成\n");
+    
+    // 使能NVIC中断
+    EnableNvic(PORT2_IRQn, DDL_IRQ_LEVEL_DEFAULT, TRUE);
+    UARTIF_uartPrintf(0, "PORT2 NVIC中断使能完成\n");
+    
+    // 读取初始状态
+    initState = Gpio_GetIO(2, 6);
+    g_stcEncoder.u8LastStateA = initState;
+    g_stcEncoder.u8LastStateB = Gpio_GetIO(2, 5);
+    
+    UARTIF_uartPrintf(0, "P26(A相)初始状态: %d\n", g_stcEncoder.u8LastStateA);
+    UARTIF_uartPrintf(0, "P25(B相)初始状态: %d\n", g_stcEncoder.u8LastStateB);
+    UARTIF_uartPrintf(0, "=== GPIO初始化完成 ===\n\n");
+}
+
+void Gpio_IRQHandler(uint8_t u8Param)
+{
+	uint8_t u8CurrentStateA;
+    uint8_t u8CurrentStateB;
+    int8_t i8CurrentDirection;
+    
+	// 仅处理PORT2 (端口2)
+    if (u8Param != 2)
+    {
+        *((uint32_t *)((uint32_t)&M0P_GPIO->P0ICLR + u8Param * 0x40)) = 0;
+        return;
+    }
+    
+    // 读取当前A相和B相的状态
+    u8CurrentStateA = Gpio_GetIO(2, 6);  // P26 - A相
+    u8CurrentStateB = Gpio_GetIO(2, 5);  // P25 - B相
+    
+    // 只在A相从低变高时判断方向（防止多次触发）
+    if ((u8CurrentStateA != 0) && (g_stcEncoder.u8LastStateA == 0))  // A相从0变1
+    {
+        // 根据B相判断旋转方向
+        if (u8CurrentStateB == 0)  // B相为低
+        {
+            g_stcEncoder.i32Count++;
+            g_stcEncoder.i8Direction = 1;  // 正向
+            i8CurrentDirection = 1;  // 正向
+        }
+        else  // B相为高
+        {
+            g_stcEncoder.i32Count--;
+            g_stcEncoder.i8Direction = -1;  // 反向
+            i8CurrentDirection = -1;  // 反向
+        }
+        g_stcEncoder.i8Direction = i8CurrentDirection;
+        
+        // 检查方向是否连续（需要两次连续的同方向）
+        if (i8CurrentDirection == g_i8LastDirection && i8CurrentDirection != 0)
+        {
+            // 确认方向（两次连续相同）
+            g_u8DirectionConfirmCount++;
+            
+            if (g_u8DirectionConfirmCount >= 2)
+            {
+                // 执行方向动作
+                if (i8CurrentDirection > 0)  // 正向
+                {
+                    g_u8CurrentImageSlot++;
+                    if (g_u8CurrentImageSlot > 8)
+                        g_u8CurrentImageSlot = 1;
+                }
+                else  // 反向
+                {
+                    g_u8CurrentImageSlot--;
+                    if (g_u8CurrentImageSlot < 1)
+                        g_u8CurrentImageSlot = 8;
+                }
+                
+                // 更新显示
+                EPD_WhiteScreenGDEY042Z98UsingFlashDate(g_u8CurrentImageSlot);
+                UARTIF_uartPrintf(0, "方向确认: %s | 当前槽位: %d\n", 
+                                  i8CurrentDirection > 0 ? "正向" : "反向", 
+                                  g_u8CurrentImageSlot);
+                
+                g_u8DirectionConfirmCount = 0;
+            }
+        }
+        else
+        {
+            // 方向改变，重置计数
+            g_i8LastDirection = i8CurrentDirection;
+            g_u8DirectionConfirmCount = 1;
+        }
+        
+        g_u32InterruptCount++;
+    }
+    
+    // 更新上次状态（必须在最后更新）
+    g_stcEncoder.u8LastStateA = u8CurrentStateA;
+    g_stcEncoder.u8LastStateB = u8CurrentStateB;
+    
+    // 清除中断标志位
+    *((uint32_t *)((uint32_t)&M0P_GPIO->P0ICLR + u8Param * 0x40)) = 0;
+}
+
+void DisplayEncoderCount(void)
+{
+    // 显示编码器计数值和旋转方向
+    const char *direction_str;
+    
+    switch (g_stcEncoder.i8Direction)
+    {
+        case 1:
+            direction_str = "正向";
+            break;
+        case -1:
+            direction_str = "反向";
+            break;
+        default:
+            direction_str = "未动";
+            break;
+    }
+    
+    UARTIF_uartPrintf(0, "编码器计数: %d | 方向: %s | A=%d B=%d | 中断次数: %d | 时间: %dms\n",
+                      g_stcEncoder.i32Count, 
+                      direction_str,
+                      g_stcEncoder.u8LastStateA,
+                      g_stcEncoder.u8LastStateB,
+                      g_u32InterruptCount,
+                      g_u32SystemTick);
+}
+//-----------------------------------------------------------
+void Bt0Int(void)//20ms一次
 {
     Bt_ClearIntFlag(TIM0);
+
+    g_u32SystemTick++;
 
     // Call passThrough and image transfer processing every 1ms
     // UARTIF_passThrough();
@@ -365,6 +551,11 @@ static void timInit(void)
  ******************************************************************************/
 int32_t main(void)
 {
+    /*   编码器   */
+    uint32_t u32LastDisplayCount = 0;
+	boolean_t currentState = 0;
+    /*   编码器   */
+
 //    uint8_t data = 0;
 //   uint8_t crc = 0;
 //    boolean_t trig1s = FALSE;
@@ -390,6 +581,10 @@ int32_t main(void)
     UARTIF_uartPrintf(0, "Chip id is 0x%x ! \n", chipId);
     delay1ms(100);
 
+    /*   编码器   */
+	// 初始化计数显示
+    gpio_init();
+	/*   编码器   */
 
     // Erase sector 0 (address 0x000000)
     // When using 0x20 to erase sector, erase address like 0x003000, last three bits unused
@@ -513,26 +708,21 @@ int32_t main(void)
     while(1)
     {
         UARTIF_passThrough();
+        
+        // 编码器计数显示：每有新的中断就显示一次
+        if (g_u32InterruptCount != u32LastDisplayCount)
+        {
+            u32LastDisplayCount = g_u32InterruptCount;
+            DisplayEncoderCount();
+        }
+        
+
         // 5ms task: image transfer processing
         // if (tg5ms)
         // {
         //     tg5ms = FALSE;
         //     ImageTransferV2_Process();
         // }
-
-        // EPD_WhiteScreenGDEY042Z98UsingFlashDate(0x000000);
-        // UARTIF_uartPrintf(0, "P1! \n");
-        // delay1ms(10000);
-
-        // EPD_WhiteScreenGDEY042Z98ALLWrite();
-        // delay1ms(10000);
-
-        // EPD_WhiteScreenGDEY042Z98UsingFlashDate(0x000100);
-        // UARTIF_uartPrintf(0, "P2! \n");
-        // delay1ms(10000);
-
-        // EPD_WhiteScreenGDEY042Z98ALLWrite();
-        // delay1ms(10000);
 
     }
 

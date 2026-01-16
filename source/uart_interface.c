@@ -483,7 +483,6 @@ void UARTIF_passThrough(void)
                     uint8_t dataMagic;
                     uint8_t clearDataMagic;
                     uint8_t headerMagic;
-					uint8_t isRedBlackComposite;
                     uint8_t showMode;
                     /* 查找并对齐到 MAGIC 开头 */
                     if ((uint8_t)buffer[0] != FRAME_MAGIC_0 || (uint8_t)buffer[1] != FRAME_MAGIC_1)
@@ -600,7 +599,9 @@ void UARTIF_passThrough(void)
                                 /* 如果这是最后一页（frame == MAX_FRAME_NUM），则视为本张图片接收完成，写入 image header 并清空对侧通道（不触发显示） */
                                 if (receivedPageCount == MAX_FRAME_NUM)
                                 {
-                                    uint8_t isRedBlackComposite = 0;
+                                    
+                                    UARTIF_uartPrintf(0, "[PAGE_WRITE] Final page received! slot=%u, page=%u, isRed=%u, redRecv=%u, blackRecv=%u\r\n",
+                                                    currentImageSlot, receivedPageCount, lastImageIsRed, redLayerReceived, blackLayerReceived);
                                     
                                     /* Image receive complete */
                                     // 追踪接收状态
@@ -610,71 +611,19 @@ void UARTIF_passThrough(void)
                                         blackLayerReceived = 1;
                                     }
                                     
-                                    // 判断是否已收到两层（红黑合成）
-                                    isRedBlackComposite = redLayerReceived && blackLayerReceived;
-                                    
                                     if (lastImageIsRed) {
                                         /* RED layer complete */
-                                        if (!isRedBlackComposite) {
-                                            /* RED only mode: 清空 BW 页（写为白色 0xFF），再写入 headers */
-                                            /* 写入 RED / BW header 保持向后兼容顺序 */
-                                            fres = FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, currentImageSlot);
-                                            if (fres != FLASH_OK) {}
-                                            {
-                                                uint16_t j;
-                                                uint16_t wid;
-                                                for (j = 0; j <= MAX_FRAME_NUM; ++j) {
-                                                    memset(buffer, 0xFF, PAYLOAD_SIZE);
-                                                    wid = (uint16_t)(j | ((uint16_t)currentImageSlot << 8));
-                                                    fres = FM_writeData(MAGIC_BW_IMAGE_DATA, wid, buffer, PAYLOAD_SIZE);
-                                                    UARTIF_uartPrintf(0, "CLEAR BW page %u sus id=0x%04X\n", j, wid);
-                                                    if (fres != FLASH_OK) {
-                                                        UARTIF_uartPrintf(0, "CLEAR BW page %u fail id=0x%04X err=%d\n", j, wid, fres);
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                            fres = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, currentImageSlot);
-                                            if (fres != FLASH_OK) {}
-                                        } else {
-                                            /* Composite: RED waiting for BW */
-                                            fres = FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, currentImageSlot);
-                                            if (fres != FLASH_OK) {}
-                                        }
+                                        fres = FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, currentImageSlot);
                                     } else {
-                                        /* BW layer complete */
-                                        if (!isRedBlackComposite) {
-                                            /* BW only mode: 清空 RED 页（写为白色 0x00），再写入 headers */
-                                            
-                                            /* 写入 BW / RED header 保持向后兼容顺序 */
-                                            fres = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, currentImageSlot);
-                                            if (fres != FLASH_OK) {}
-                                            {
-                                                uint16_t j;
-                                                uint16_t wid;
-                                                for (j = 0; j <= MAX_FRAME_NUM; ++j) {
-                                                    memset(buffer, 0x00, PAYLOAD_SIZE);
-                                                    wid = (uint16_t)(j | ((uint16_t)currentImageSlot << 8));
-                                                    fres = FM_writeData(MAGIC_RED_IMAGE_DATA, wid, buffer, PAYLOAD_SIZE);
-                                                    UARTIF_uartPrintf(0, "CLEAR RED page %u sus id=0x%04X\n", j, wid);
-                                                    if (fres != FLASH_OK) {
-                                                        UARTIF_uartPrintf(0, "CLEAR RED page %u fail id=0x%04X err=%d\n", j, wid, fres);
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                            fres = FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, currentImageSlot);
-                                            if (fres != FLASH_OK) {}
-                                        } else {
-                                            /* Composite: BW complete, write BW header only */
-                                            fres = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, currentImageSlot);
-                                            if (fres != FLASH_OK) {}
-                                        }
+                                        fres = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, currentImageSlot);
                                     }
-                                    
-                                    /* If both layers received, composite image done */
-                                    if (isRedBlackComposite) {
-                                        /* Composite image complete */
+
+                                    if (fres != FLASH_OK) {
+                                        UARTIF_uartPrintf(0, "Image header write fail slot=%u err=%d\r\n",
+                                                          currentImageSlot, fres);
+                                    } else {
+                                        UARTIF_uartPrintf(0, "Image header written slot=%u\r\n",
+                                                          currentImageSlot);
                                     }
                                 }
                                 else
@@ -710,20 +659,38 @@ void UARTIF_passThrough(void)
                                 UARTIF_uartPrintf(0, "DEBUG: redLayerReceived=%u, blackLayerReceived=%u, lastImageIsRed=%u\r\n", 
                                                   redLayerReceived, blackLayerReceived, lastImageIsRed);
                                 
-                                // /* 根据接收的层数来决定显示模式 */
-                                // showMode = IMAGE_BW;
-                                // if (redLayerReceived && blackLayerReceived) {
-                                //     /* 合成图像：同时有红黑两层 */
-                                //     showMode = IMAGE_BW_AND_RED;
-                                //     UARTIF_uartPrintf(0, "Display mode: IMAGE_BW_AND_RED (Composite)\r\n");
-                                // } else if (lastImageIsRed) {
-                                //     /* 只有红色层 */
-                                //     showMode = IMAGE_BW_AND_RED;
-                                //     UARTIF_uartPrintf(0, "Display mode: IMAGE_BW_AND_RED (Red only)\r\n");
-                                // } else {
-                                //     /* 只有黑白层 */
-                                //     UARTIF_uartPrintf(0, "Display mode: IMAGE_BW (Black&White only)\r\n");
-                                // }
+                                /* 如果缺少某层，补全清除 */
+                                if (redLayerReceived && !blackLayerReceived) {
+                                    /* 已收红色，缺黑色 - 清除黑色页 */
+                                    uint16_t j;
+                                    uint16_t wid;                                    
+                                    for (j = 0; j <= MAX_FRAME_NUM; ++j) {
+                                        memset(buffer, 0xFF, PAYLOAD_SIZE);
+                                        wid = (uint16_t)(j | ((uint16_t)currentImageSlot << 8));
+                                        FM_writeData(MAGIC_BW_IMAGE_DATA, wid, buffer, PAYLOAD_SIZE);
+                                        if (fres != FLASH_OK) {
+                                            UARTIF_uartPrintf(0, "CLEAR BW page %u fail id=0x%04X err=%d\n", j, wid, fres);
+                                            break;
+                                        }
+                                    }
+                                    fres = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, currentImageSlot);
+                                    UARTIF_uartPrintf(0, "DISPLAY: RED layer only, clearing BW pages\r\n");
+                                } else if (!redLayerReceived && blackLayerReceived) {
+                                    /* 已收黑色，缺红色 - 清除红色页 */
+                                    uint16_t j;
+                                    uint16_t wid;
+                                    for (j = 0; j <= MAX_FRAME_NUM; ++j) {
+                                        memset(buffer, 0x00, PAYLOAD_SIZE);
+                                        wid = (uint16_t)(j | ((uint16_t)currentImageSlot << 8));
+                                        FM_writeData(MAGIC_RED_IMAGE_DATA, wid, buffer, PAYLOAD_SIZE);
+                                        if (fres != FLASH_OK) {
+                                            UARTIF_uartPrintf(0, "CLEAR BW page %u fail id=0x%04X err=%d\n", j, wid, fres);
+                                            break;
+                                        }
+                                    }
+                                    fres = FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, currentImageSlot);
+                                    UARTIF_uartPrintf(0, "DISPLAY: BW layer only, clearing RED pages\r\n");
+                                }
 
                                 EPD_WhiteScreenGDEY042Z98UsingFlashDate(currentImageSlot);
                                 receivedPageCount = 0;
