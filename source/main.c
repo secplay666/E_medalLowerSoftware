@@ -123,6 +123,7 @@ volatile uint32_t g_u32InterruptCount = 0;  // 中断计数器
 volatile uint32_t g_u32SystemTick = 0;     // 系统节拍（毫秒）
 
 // 图像显示相关
+volatile int8_t rotation = 0;               //旋转方向
 volatile int8_t g_u8CurrentImageSlot = 0;  // 当前图像槽位，范围1-8
 volatile int8_t g_i8LastDirection = 0;      // 上次方向
 volatile uint8_t g_u8DirectionConfirmCount = 0;  // 连续相同方向计数（需要2次）
@@ -210,11 +211,11 @@ void Gpio_IRQHandler(uint8_t u8Param)
         *((uint32_t *)((uint32_t)&M0P_GPIO->P0ICLR + u8Param * 0x40)) = 0;
         return;
     }
-
-		u8CurrentStateA = Gpio_GetIO(2, 6);
-		u8CurrentStateB = Gpio_GetIO(2, 5);
-		prevAB = ((g_stcEncoder.u8LastStateA & 0x1) << 1) | (g_stcEncoder.u8LastStateB & 0x1);
-		currAB = ((u8CurrentStateA & 0x1) << 1) | (u8CurrentStateB & 0x1);
+    
+    u8CurrentStateA = Gpio_GetIO(2, 6);
+    u8CurrentStateB = Gpio_GetIO(2, 5);
+    prevAB = ((g_stcEncoder.u8LastStateA & 0x1) << 1) | (g_stcEncoder.u8LastStateB & 0x1);
+    currAB = ((u8CurrentStateA & 0x1) << 1) | (u8CurrentStateB & 0x1);
 
     // 只允许相邻状态跳变，否则丢弃本次采样
     step = stateTable[prevAB][currAB];
@@ -230,21 +231,14 @@ void Gpio_IRQHandler(uint8_t u8Param)
         if (g_stcEncoder.i8Direction == g_i8LastDirection) {
             g_u8DirectionConfirmCount++;
             if (g_u8DirectionConfirmCount >= 2) {
-                if (g_stcEncoder.i8Direction > 0) {
-                    g_u8CurrentImageSlot++;
-                    if (g_u8CurrentImageSlot > 7)
-                        g_u8CurrentImageSlot = 0;
-                } else {
-                    g_u8CurrentImageSlot--;
-                    if (g_u8CurrentImageSlot < 0)
-                        g_u8CurrentImageSlot = 7;
+                if(rotation == 0) {
+                    if (g_stcEncoder.i8Direction > 0) {
+                        rotation = 1;
+                    } else {
+                        rotation = -1;
+                    }
                 }
-                // 可在此处调用刷新显示函数
-                EPD_WhiteScreenGDEY042Z98UsingFlashDate(g_u8CurrentImageSlot);
-                UARTIF_uartPrintf(0, "%s | %d\n",
-                g_stcEncoder.i8Direction > 0 ? "正向" : "反向", g_u8CurrentImageSlot);
                 g_u8DirectionConfirmCount = 0;
-                delay1ms(8000);
             }
         } else {
             g_i8LastDirection = g_stcEncoder.i8Direction;
@@ -702,7 +696,23 @@ int32_t main(void)
     {
         UARTIF_passThrough();
         
-        
+        if (rotation == 1) {
+            UARTIF_uartPrintf(0, "Rotation detected: %d\n", rotation);
+            g_u8CurrentImageSlot++;
+            if (g_u8CurrentImageSlot > 7)
+                g_u8CurrentImageSlot = 0;
+            EPD_WhiteScreenGDEY042Z98UsingFlashDate(g_u8CurrentImageSlot);
+            delay1ms(6000);
+            rotation = 0;  // Reset rotation after handling
+        } else if (rotation == -1) {
+            UARTIF_uartPrintf(0, "Rotation detected: %d\n", rotation);
+            g_u8CurrentImageSlot--;
+            if (g_u8CurrentImageSlot < 0)
+                g_u8CurrentImageSlot = 7;
+            EPD_WhiteScreenGDEY042Z98UsingFlashDate(g_u8CurrentImageSlot);
+            delay1ms(6000);
+            rotation = 0;  // Reset rotation after handling
+        }
 
         // 5ms task: image transfer processing
         // if (tg5ms)
