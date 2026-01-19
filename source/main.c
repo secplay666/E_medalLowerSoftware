@@ -124,7 +124,7 @@ volatile uint32_t g_u32SystemTick = 0;     // 系统节拍（毫秒）
 
 // 图像显示相关
 volatile int8_t rotation = 0;               //旋转方向
-volatile int8_t g_u8CurrentImageSlot = 0;  // 当前图像槽位，范围1-8
+// volatile int8_t currentImageSlot = 0;  // 当前图像槽位，范围1-8
 volatile int8_t g_i8LastDirection = 0;      // 上次方向
 volatile uint8_t g_u8DirectionConfirmCount = 0;  // 连续相同方向计数（需要2次）
 
@@ -548,7 +548,7 @@ int32_t main(void)
 //    boolean_t trig1s = FALSE;
     uint32_t chipId = 0;
 //   uint8_t sts = 0;
-//flash_result_t result = FLASH_OK;
+    flash_result_t result = FLASH_OK;
     UARTIF_uartInit();
     // i2cInit();
     UARTIF_lpuartInit();
@@ -684,7 +684,7 @@ int32_t main(void)
     // (void)FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, 0);
 
     // EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW_AND_RED,0);
-
+    result = FM_readData(DATA_PAGE_MAGIC, 0, (uint8_t *)&currentImageSlot, 1); // Read saved slot
     UARTIF_uartPrintf(0, "Goto while ! \n");
     
     /* ===== QUICK COMPOSITE TEST ===== */
@@ -698,18 +698,22 @@ int32_t main(void)
         
         if (rotation == 1) {
             UARTIF_uartPrintf(0, "Rotation detected: %d\n", rotation);
-            g_u8CurrentImageSlot++;
-            if (g_u8CurrentImageSlot > 7)
-                g_u8CurrentImageSlot = 0;
-            EPD_WhiteScreenGDEY042Z98UsingFlashDate(g_u8CurrentImageSlot);
+            currentImageSlot++;
+            UARTIF_uartPrintf(0, "Current Image Slot: %d\n", currentImageSlot);
+            if (currentImageSlot > 7)
+                currentImageSlot = 0;
+            EPD_WhiteScreenGDEY042Z98UsingFlashDate(currentImageSlot);
+            result = FM_writeData(DATA_PAGE_MAGIC, 0, (uint8_t *)&currentImageSlot, 1); // Save current slot
             delay1ms(6000);
             rotation = 0;  // Reset rotation after handling
         } else if (rotation == -1) {
             UARTIF_uartPrintf(0, "Rotation detected: %d\n", rotation);
-            g_u8CurrentImageSlot--;
-            if (g_u8CurrentImageSlot < 0)
-                g_u8CurrentImageSlot = 7;
-            EPD_WhiteScreenGDEY042Z98UsingFlashDate(g_u8CurrentImageSlot);
+            currentImageSlot--;
+            UARTIF_uartPrintf(0, "Current Image Slot after decrement: %d\n", currentImageSlot);
+            if (currentImageSlot < 0)
+                currentImageSlot = 7;
+            EPD_WhiteScreenGDEY042Z98UsingFlashDate(currentImageSlot);
+            result = FM_writeData(DATA_PAGE_MAGIC, 0, (uint8_t *)&currentImageSlot, 1); // Save current slot
             delay1ms(6000);
             rotation = 0;  // Reset rotation after handling
         }

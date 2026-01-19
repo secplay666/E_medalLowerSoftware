@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include "base_types.h"
 
+extern volatile int8_t currentImageSlot;
+
 void UARTIF_uartPrintf(uint8_t uartNumber, const char *format, ...);
 void UARTIF_uartPrintfFloat(uint8_t uartNumber, const char *head, const float data);
 void UARTIF_uartInit(void);

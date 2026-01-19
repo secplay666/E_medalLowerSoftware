@@ -74,7 +74,7 @@ size_t bufferIndex = 0;
 static uint16_t receivedPageCount = 0;
 
 /* 当前目标图像槽位（0..7），由主机通过 "SET_SLOT:<1-8>" 指定。默认0（槽位1） */
-static uint8_t currentImageSlot = 0;
+volatile int8_t currentImageSlot = 0;
 
 /* 最近写入的图像是否为红色通道（true 表示 RED 数据页已被写入） */
 static bool lastImageIsRed = false;
