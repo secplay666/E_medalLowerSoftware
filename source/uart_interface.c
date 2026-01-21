@@ -346,6 +346,18 @@ void UARTIF_uartInit(void)
 
 }
 
+// 返回内部 UART 接收队列是否为空（TRUE 表示空）
+boolean_t UARTIF_isUartRecEmpty(void)
+{
+    return Queue_IsEmpty(&uartRecdata) ? TRUE : FALSE;
+}
+
+// 返回内部 LPUART 接收队列是否为空（TRUE 表示空）
+boolean_t UARTIF_isLpUartRecEmpty(void)
+{
+    return Queue_IsEmpty(&lpUartRecdata) ? TRUE : FALSE;
+}
+
 void UARTIF_lpuartInit(void)
 {
    uint32_t u32sclk;

@@ -73,6 +73,11 @@ static volatile boolean_t tg1 = FALSE;
 static volatile boolean_t tg5ms = FALSE;  // 5ms task flag for image transfer
 static volatile boolean_t wakeup = FALSE;
 static volatile boolean_t tg8s = FALSE;
+// 交互模式（由编码器确认触发，进入后保持30s）
+static volatile boolean_t g_interactive_mode = FALSE;
+static volatile uint32_t g_interactive_start_tick = 0; // 毫秒计时基于 g_u32SystemTick
+// 连续有效编码器跳变计数（用于检测完整档位连续触发）
+static volatile uint8_t g_u8ConsecEncCount = 0;
 // static volatile boolean_t tg2s = FALSE;
 //static float temperature = 0.0, humidity = 0.0;
 //static boolean_t linkFlag = FALSE;
@@ -121,6 +126,9 @@ typedef struct {
 volatile stc_encoder_t g_stcEncoder = {0, 0, 0, 0};
 volatile uint32_t g_u32InterruptCount = 0;  // 中断计数器
 volatile uint32_t g_u32SystemTick = 0;     // 系统节拍（毫秒）
+
+// 上次主循环已报告的编码器计数，用于按完整档位（4个相位跳变）判断是否真正移动一格
+static volatile int32_t g_lastReportedCount = 0;
 
 // 图像显示相关
 volatile int8_t rotation = 0;               //旋转方向
@@ -223,28 +231,47 @@ void Gpio_IRQHandler(uint8_t u8Param)
         g_stcEncoder.i32Count += step;
         g_stcEncoder.i8Direction = (step > 0) ? 1 : -1;
 
-        // 调试：打印每次有效跳变
-        //UARTIF_uartPrintf(0, "ENC: prevAB=%d currAB=%d step=%d cnt=%ld dir=%d\n",
-        //    prevAB, currAB, step, g_stcEncoder.i32Count, g_stcEncoder.i8Direction);
-
-        // 方向确认逻辑（可选，防止误判）
+        // 方向确认逻辑（用于抑制毛刺）
         if (g_stcEncoder.i8Direction == g_i8LastDirection) {
             g_u8DirectionConfirmCount++;
-            if (g_u8DirectionConfirmCount >= 2) {
-                if(rotation == 0) {
-                    if (g_stcEncoder.i8Direction > 0) {
-                        rotation = 1;
-                    } else {
-                        rotation = -1;
-                    }
-                }
-                g_u8DirectionConfirmCount = 0;
-            }
         } else {
             g_i8LastDirection = g_stcEncoder.i8Direction;
             g_u8DirectionConfirmCount = 1;
         }
         g_u32InterruptCount++;
+
+        // 连续检测：在短时间内连续4次相同方向有效跳变时，才认为是一次完整档位切换，
+        // 并进入交互模式（interactive mode），同时启动 30s 超时计时基准。
+        {
+            static uint32_t last_enc_tick = 0;
+            static int8_t last_enc_event_dir = 0;
+            uint32_t now = g_u32SystemTick;
+            int8_t this_dir = (step > 0) ? 1 : -1;
+
+            // 如果两次有效跳变间隔过长，则重置连续计数
+            if ((now - last_enc_tick) > 200) {
+                g_u8ConsecEncCount = 0;
+                last_enc_event_dir = 0;
+            }
+
+            if (last_enc_event_dir == this_dir) {
+                g_u8ConsecEncCount++;
+            } else {
+                g_u8ConsecEncCount = 1;
+                last_enc_event_dir = this_dir;
+            }
+            last_enc_tick = now;
+
+            if (g_u8ConsecEncCount >= 4) {
+                // 确认触发：进入交互模式，记录开始时间，设置 rotation 供主循环处理
+                g_interactive_mode = TRUE;
+                g_interactive_start_tick = g_u32SystemTick;
+                rotation = this_dir;
+                g_lastReportedCount = g_stcEncoder.i32Count;
+                g_u8ConsecEncCount = 0; // 重置计数，防止重复触发
+                g_u8DirectionConfirmCount = 0;
+            }
+        }
     }
     // 更新上次状态（必须在最后更新）
     g_stcEncoder.u8LastStateA = u8CurrentStateA;
@@ -261,26 +288,27 @@ void Bt0Int(void)//20ms一次
 {
     Bt_ClearIntFlag(TIM0);
 
-    g_u32SystemTick++;
+    // 本中断每 20ms 触发一次，g_u32SystemTick 以毫秒为单位递增
+    g_u32SystemTick += 20;
 
-    // Call passThrough and image transfer processing every 1ms
-    // UARTIF_passThrough();
+    // 保持原有的被调用逻辑
     (void)E104_getLinkState();
 
-    // High frequency image transfer processing (every 1ms)
-    tg5ms = TRUE;  // Note: now 1ms, not 5ms, but keep variable name for compatibility
+    // 保持高频任务标志（命名兼容）
+    tg5ms = TRUE;
 
-    // Maintain original timer counter logic for generating other time flags
-    if (timer0 < 7999)  // 1s (originally 200->5ms, now 8000->1ms)
+    // timer0 作为毫秒计时器使用：以 20ms 步进累加，1s = 1000ms
+    if (timer0 < 1000U)
     {
-        timer0++;
+        timer0 += 20U;
     }
     else
     {
         timer0 = 0;
     }
 
-    if ((timer0 % 10) == 0) // 10ms (originally 2->10ms, now 10->10ms)
+    // 保留 tg1 作为短周期任务触发：原先是 10ms，这里由于 20ms 基准，近似替代为每次都触发的等效频率
+    if ((timer0 % 10U) == 0U)
     {
         tg1 = TRUE;
     }
@@ -380,8 +408,20 @@ static void timInit(void)
 
 }
 
-//static void lpmInit(void)
-//{
+// 为 GPIO 唤醒场景提供的 LPM 配置函数（使用浅睡眠、WFI 可被 GPIO 中断唤醒）
+static void lpmConfigForGpioWake(void)
+{
+    stc_lpm_config_t stcLpmCfg;
+
+    stcLpmCfg.enSEVONPEND   = SevPndDisable; // WFE 不使用
+    stcLpmCfg.enSLEEPDEEP   = SlpDpDisable;  // 浅睡眠，保证 GPIO 中断可靠唤醒
+    stcLpmCfg.enSLEEPONEXIT = SlpExtDisable; // 中断返回后不自动再睡
+
+    Lpm_Config(&stcLpmCfg);
+}
+
+// static void lpmInit(void)
+// {
 //    stc_lpt_config_t stcConfig;
 //    stc_lpm_config_t stcLpmCfg;
 //    uint16_t         u16ArrData = 0;
@@ -396,7 +436,7 @@ static void timInit(void)
 //    stcConfig.enTog    = LptTogDisable;
 //    stcConfig.enCT     = LptTimer;
 //    stcConfig.enMD     = LptMode2;
-//    
+   
 //    stcConfig.pfnLpTimCb = LptInt;
 //    Lpt_Init(&stcConfig);
 //    //Lpm Cfg
@@ -404,13 +444,13 @@ static void timInit(void)
 //    stcLpmCfg.enSLEEPDEEP   = SlpDpEnable;
 //    stcLpmCfg.enSLEEPONEXIT = SlpExtDisable;
 //    Lpm_Config(&stcLpmCfg);
-//    
+   
 //    // Enable Lpt interrupt
 //    Lpt_ClearIntFlag();
 //    Lpt_EnableIrq();
 //    EnableNvic(LPTIM_IRQn, 0, TRUE);
-//
-//
+
+
 //    // Set reload value, count initial value, start counting
 //    Lpt_ARRSet(u16ArrData);
 //    Lpt_Run();
@@ -418,7 +458,7 @@ static void timInit(void)
 //    // Enter low power mode...
 //    Lpm_GotoLpmMode(); 
 
-//}
+// }
 
 //static void task3(void)
 //{
@@ -573,6 +613,7 @@ int32_t main(void)
     gpio_init();
 	/*   编码器   */
 
+    lpmConfigForGpioWake();
     // Erase sector 0 (address 0x000000)
     // When using 0x20 to erase sector, erase address like 0x003000, last three bits unused
 //    W25Q32_EraseSector(FLASH_SEGMENT0_BASE);
@@ -685,8 +726,11 @@ int32_t main(void)
 
     // EPD_WhiteScreenGDEY042Z98UsingFlashDate(IMAGE_BW_AND_RED,0);
     result = FM_readData(DATA_PAGE_MAGIC, 0, (uint8_t *)&currentImageSlot, 1); // Read saved slot
+
     UARTIF_uartPrintf(0, "Goto while ! \n");
-    
+
+
+
     /* ===== QUICK COMPOSITE TEST ===== */
     /* Uncomment this line to automatically test RED+BW composite display on startup */
     //DRAW_testCompositeQuick(0);
@@ -695,7 +739,8 @@ int32_t main(void)
     while(1)
     {
         UARTIF_passThrough();
-        
+        UARTIF_uartPrintf(0, "Current Image Slot after decrement: %d\n", currentImageSlot);
+
         if (rotation == 1) {
             UARTIF_uartPrintf(0, "Rotation detected: %d\n", rotation);
             currentImageSlot++;
@@ -724,7 +769,40 @@ int32_t main(void)
         //     tg5ms = FALSE;
         //     ImageTransferV2_Process();
         // }
+            // 如果串口/任务空闲且编码器无动作，则在进入睡眠前临时屏蔽短周期中断和串口中断，清除挂起标志，
+    // 以避免噪声或未处理数据导致频繁唤醒。唤醒后恢复中断。
+        // 如果处于交互模式且超时（30s）则退出交互模式，允许进入睡眠
+        if (g_interactive_mode) {
+            if ((g_u32SystemTick - g_interactive_start_tick) >= 30000UL) {
+                g_interactive_mode = FALSE;
+                // 到期后清理 rotation，允许主循环再次睡眠
+                rotation = 0;
+                UARTIF_uartPrintf(0, "Interactive mode timeout, returning to sleep\n");
+            }
+        }
 
+        // 如果不在交互模式且串口/任务空闲且编码器无动作，则进入睡眠
+        if ( (!g_interactive_mode) && UARTIF_isUartRecEmpty() && UARTIF_isLpUartRecEmpty() && (rotation == 0) )
+        {
+            // 关闭短周期定时器和串口接收中断
+            Bt_DisableIrq(TIM0);
+            Uart_DisableIrq(UARTCH1, UartRxIrq);
+            // LPUart_DisableIrq(LPUartRxIrq); 
+
+            // 清除可能的挂起/接收状态，防止立即被唤醒
+            Uart_ClrStatus(UARTCH1, UartRxFull);
+            //LPUart_ClrStatus(LPUartRxFull);
+            Gpio_ClearIrq(2, 6);
+            Gpio_ClearIrq(2, 5);
+
+            // 进入低功耗等待（WFI），任一已使能的中断将唤醒
+            Lpm_GotoLpmMode();
+
+            // 唤醒后恢复中断
+            Bt_EnableIrq(TIM0);
+            Uart_EnableIrq(UARTCH1, UartRxIrq);
+            LPUart_EnableIrq(LPUartRxIrq);
+        }
     }
 
 

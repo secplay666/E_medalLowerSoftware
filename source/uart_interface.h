@@ -16,5 +16,9 @@ uint16_t UARTIF_fetchDataFromUart(uint8_t *buf, uint16_t *idx);
 void UARTIF_getUartStats(uint32_t *rxCount, uint32_t *overflowCount);
 void UARTIF_resetUartStats(void);
 
+// Queue status helpers (expose internal queues safely)
+boolean_t UARTIF_isUartRecEmpty(void);
+boolean_t UARTIF_isLpUartRecEmpty(void);
+
 
 #endif // UART_INTERFACE_H
