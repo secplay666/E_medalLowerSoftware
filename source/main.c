@@ -219,7 +219,9 @@ void Gpio_IRQHandler(uint8_t u8Param)
         *((uint32_t *)((uint32_t)&M0P_GPIO->P0ICLR + u8Param * 0x40)) = 0;
         return;
     }
-    
+
+    //UARTIF_uartPrintf(0, "wake up--\n");
+
     u8CurrentStateA = Gpio_GetIO(2, 6);
     u8CurrentStateB = Gpio_GetIO(2, 5);
     prevAB = ((g_stcEncoder.u8LastStateA & 0x1) << 1) | (g_stcEncoder.u8LastStateB & 0x1);
@@ -739,7 +741,7 @@ int32_t main(void)
     while(1)
     {
         UARTIF_passThrough();
-        UARTIF_uartPrintf(0, "Current Image Slot after decrement: %d\n", currentImageSlot);
+        //UARTIF_uartPrintf(0, "%d", currentImageSlot);
 
         if (rotation == 1) {
             UARTIF_uartPrintf(0, "Rotation detected: %d\n", rotation);
@@ -770,10 +772,10 @@ int32_t main(void)
         //     ImageTransferV2_Process();
         // }
             // 如果串口/任务空闲且编码器无动作，则在进入睡眠前临时屏蔽短周期中断和串口中断，清除挂起标志，
-    // 以避免噪声或未处理数据导致频繁唤醒。唤醒后恢复中断。
+        // 以避免噪声或未处理数据导致频繁唤醒。唤醒后恢复中断。
         // 如果处于交互模式且超时（30s）则退出交互模式，允许进入睡眠
         if (g_interactive_mode) {
-            if ((g_u32SystemTick - g_interactive_start_tick) >= 30000UL) {
+            if ((g_u32SystemTick - g_interactive_start_tick) >= 5000UL) {
                 g_interactive_mode = FALSE;
                 // 到期后清理 rotation，允许主循环再次睡眠
                 rotation = 0;
@@ -782,7 +784,7 @@ int32_t main(void)
         }
 
         // 如果不在交互模式且串口/任务空闲且编码器无动作，则进入睡眠
-        if ( (!g_interactive_mode) && UARTIF_isUartRecEmpty() && UARTIF_isLpUartRecEmpty() && (rotation == 0) )
+        if ( (!g_interactive_mode) && UARTIF_isUartRecEmpty() && UARTIF_isLpUartRecEmpty() && (rotation == 0) && !UARTIF_isTransferActive() )
         {
             // 关闭短周期定时器和串口接收中断
             Bt_DisableIrq(TIM0);
@@ -794,6 +796,7 @@ int32_t main(void)
             //LPUart_ClrStatus(LPUartRxFull);
             Gpio_ClearIrq(2, 6);
             Gpio_ClearIrq(2, 5);
+            UARTIF_uartPrintf(0, "sleep--\n");
 
             // 进入低功耗等待（WFI），任一已使能的中断将唤醒
             Lpm_GotoLpmMode();

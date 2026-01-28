@@ -19,6 +19,8 @@ void UARTIF_resetUartStats(void);
 // Queue status helpers (expose internal queues safely)
 boolean_t UARTIF_isUartRecEmpty(void);
 boolean_t UARTIF_isLpUartRecEmpty(void);
+// Transfer/display activity query: TRUE when receiving pages or actively displaying
+boolean_t UARTIF_isTransferActive(void);
 
 
 #endif // UART_INTERFACE_H

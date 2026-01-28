@@ -37,6 +37,8 @@
 #include "queue.h"
 #include "drawWithFlash.h"
 #include "crc.h"
+#include "base_types.h"
+
 
 /******************************************************************************
  * Local pre-processor symbols/macros ('#define')                            
@@ -96,6 +98,9 @@ static uint8_t decompressBuffer[PAGE_SIZE];
 
 // 接收处理函数原型
 static void processReceivedBuffer(void);
+
+/* 标记从第一包开始直到显示完成的传输过程（用于阻止进入低功耗） */
+static volatile bool transferInProgress = false;
 
 /* 软件 CRC16-CCITT (poly 0x1021, init 0xFFFF)，用于与硬件驱动结果比对 */
 static uint16_t crc16_ccitt(const uint8_t *data, uint32_t len)
@@ -598,6 +603,8 @@ void UARTIF_passThrough(void)
                             if (receivedPageCount == 0) {
                                 /* 恢复为原始逻辑：flags 中 1 表示红色 */
                                 lastImageIsRed = (isRed != 0);
+                                /* 第一次接收到本图像的第一页，标记传输开始 */
+                                transferInProgress = true;
                             }
                             dataMagic = lastImageIsRed ? MAGIC_RED_IMAGE_DATA : MAGIC_BW_IMAGE_DATA;
                             /* 数据的颜色（RED/BW）已由发送端通过 flags 指定。
@@ -706,8 +713,9 @@ void UARTIF_passThrough(void)
 
                                 EPD_WhiteScreenGDEY042Z98UsingFlashDate(currentImageSlot);
                                 receivedPageCount = 0;
-                                
-                                /* 显示完成后重置标志，准备下一个图像 */
+                                /* 显示完成后清理传输标志，准备下一个图像 */
+                                transferInProgress = false;
+                                /* DISPLAY processed */
                                 redLayerReceived = 0;
                                 blackLayerReceived = 0;
                             }
@@ -914,6 +922,18 @@ uint8_t UARTIF_passThroughCmd(void)
     uint8_t tcmd = cmd;
     cmd = 0xff;
     return tcmd;
+}
+
+/**
+ * @brief 返回当前是否正在进行图像传输或显示（用于阻止进入低功耗）
+ */
+boolean_t UARTIF_isTransferActive(void)
+{
+    if (transferInProgress) return TRUE;
+    if (receivedPageCount != 0) return TRUE;
+    if (redLayerReceived || blackLayerReceived) return TRUE;
+    if (bufferIndex != 0) return TRUE;
+    return FALSE;
 }
 
 uint16_t UARTIF_fetchDataFromUart(uint8_t *buf, uint16_t *idx)
