@@ -37,6 +37,8 @@
 #include "queue.h"
 #include "drawWithFlash.h"
 #include "crc.h"
+#include "base_types.h"
+
 
 /******************************************************************************
  * Local pre-processor symbols/macros ('#define')                            
@@ -74,7 +76,7 @@ size_t bufferIndex = 0;
 static uint16_t receivedPageCount = 0;
 
 /* 当前目标图像槽位（0..7），由主机通过 "SET_SLOT:<1-8>" 指定。默认0（槽位1） */
-static uint8_t currentImageSlot = 0;
+volatile int8_t currentImageSlot = 0;
 
 /* 最近写入的图像是否为红色通道（true 表示 RED 数据页已被写入） */
 static bool lastImageIsRed = false;
@@ -96,6 +98,9 @@ static uint8_t decompressBuffer[PAGE_SIZE];
 
 // 接收处理函数原型
 static void processReceivedBuffer(void);
+
+/* 标记从第一包开始直到显示完成的传输过程（用于阻止进入低功耗） */
+static volatile bool transferInProgress = false;
 
 /* 软件 CRC16-CCITT (poly 0x1021, init 0xFFFF)，用于与硬件驱动结果比对 */
 static uint16_t crc16_ccitt(const uint8_t *data, uint32_t len)
@@ -346,6 +351,18 @@ void UARTIF_uartInit(void)
 
 }
 
+// 返回内部 UART 接收队列是否为空（TRUE 表示空）
+boolean_t UARTIF_isUartRecEmpty(void)
+{
+    return Queue_IsEmpty(&uartRecdata) ? TRUE : FALSE;
+}
+
+// 返回内部 LPUART 接收队列是否为空（TRUE 表示空）
+boolean_t UARTIF_isLpUartRecEmpty(void)
+{
+    return Queue_IsEmpty(&lpUartRecdata) ? TRUE : FALSE;
+}
+
 void UARTIF_lpuartInit(void)
 {
    uint32_t u32sclk;
@@ -483,7 +500,6 @@ void UARTIF_passThrough(void)
                     uint8_t dataMagic;
                     uint8_t clearDataMagic;
                     uint8_t headerMagic;
-					uint8_t isRedBlackComposite;
                     uint8_t showMode;
                     /* 查找并对齐到 MAGIC 开头 */
                     if ((uint8_t)buffer[0] != FRAME_MAGIC_0 || (uint8_t)buffer[1] != FRAME_MAGIC_1)
@@ -509,7 +525,7 @@ void UARTIF_passThrough(void)
                     if (bufferIndex < 5) break;
 
                     flags = (uint8_t)buffer[2];
-                    payloadLen = (((uint8_t)buffer[3]) << 8) | (uint8_t)buffer[4];
+                    payloadLen = (((uint8_t)buffer[3]) << 8) | (uint8_t)buffer[4];           
                     isCompressed = flags & 0x01;
                     /* flags bit1 (0x02) 用于指示颜色：0=黑色，1=红色 */
                     isRed = (flags & 0x02) ? 1u : 0u;
@@ -541,7 +557,17 @@ void UARTIF_passThrough(void)
                                                          decompressBuffer, PAGE_SIZE);
 
                             if (finalLen == 0) {
-                                UARTIF_uartPrintf(0, "RLE decompress FAILED\r\n");
+                                UARTIF_uartPrintf(0, "RLE decompress FAILED: payloadLen=%u\r\n", payloadLen);
+                                /* 丢弃此帧 */
+                                if (bufferIndex > frameTotal) {
+                                    memmove(buffer, &buffer[frameTotal], bufferIndex - frameTotal);
+                                }
+                                bufferIndex -= frameTotal;
+                                continue;
+                            }
+                            
+                            if (finalLen != PAGE_SIZE) {
+                                UARTIF_uartPrintf(0, "RLE decompress size mismatch: got %u expected %u\r\n", (unsigned)finalLen, (unsigned)PAGE_SIZE);
                                 /* 丢弃此帧 */
                                 if (bufferIndex > frameTotal) {
                                     memmove(buffer, &buffer[frameTotal], bufferIndex - frameTotal);
@@ -577,6 +603,8 @@ void UARTIF_passThrough(void)
                             if (receivedPageCount == 0) {
                                 /* 恢复为原始逻辑：flags 中 1 表示红色 */
                                 lastImageIsRed = (isRed != 0);
+                                /* 第一次接收到本图像的第一页，标记传输开始 */
+                                transferInProgress = true;
                             }
                             dataMagic = lastImageIsRed ? MAGIC_RED_IMAGE_DATA : MAGIC_BW_IMAGE_DATA;
                             /* 数据的颜色（RED/BW）已由发送端通过 flags 指定。
@@ -590,7 +618,9 @@ void UARTIF_passThrough(void)
                                 /* 如果这是最后一页（frame == MAX_FRAME_NUM），则视为本张图片接收完成，写入 image header 并清空对侧通道（不触发显示） */
                                 if (receivedPageCount == MAX_FRAME_NUM)
                                 {
-                                    uint8_t isRedBlackComposite = 0;
+                                    
+                                    UARTIF_uartPrintf(0, "[PAGE_WRITE] Final page received! slot=%u, page=%u, isRed=%u, redRecv=%u, blackRecv=%u\r\n",
+                                                    currentImageSlot, receivedPageCount, lastImageIsRed, redLayerReceived, blackLayerReceived);
                                     
                                     /* Image receive complete */
                                     // 追踪接收状态
@@ -600,40 +630,19 @@ void UARTIF_passThrough(void)
                                         blackLayerReceived = 1;
                                     }
                                     
-                                    // 判断是否已收到两层（红黑合成）
-                                    isRedBlackComposite = redLayerReceived && blackLayerReceived;
-                                    
                                     if (lastImageIsRed) {
                                         /* RED layer complete */
-                                        if (!isRedBlackComposite) {
-                                            /* RED only mode */
-                                            fres = FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, currentImageSlot, 1u);
-                                            if (fres != FLASH_OK) {}
-                                            fres = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, currentImageSlot, 0u);
-                                            if (fres != FLASH_OK) {}
-                                        } else {
-                                            /* Composite: RED waiting for BW */
-                                            fres = FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, currentImageSlot, 1u);
-                                            if (fres != FLASH_OK) {}
-                                        }
+                                        fres = FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, currentImageSlot);
                                     } else {
-                                        /* BW layer complete */
-                                        if (!isRedBlackComposite) {
-                                            /* BW only mode */
-                                            fres = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, currentImageSlot, 0u);
-                                            if (fres != FLASH_OK) {}
-                                            fres = FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, currentImageSlot, 0u);
-                                            if (fres != FLASH_OK) {}
-                                        } else {
-                                            /* Composite: BW complete, write BW header only */
-                                            fres = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, currentImageSlot, 1u);
-                                            if (fres != FLASH_OK) {}
-                                        }
+                                        fres = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, currentImageSlot);
                                     }
-                                    
-                                    /* If both layers received, composite image done */
-                                    if (isRedBlackComposite) {
-                                        /* Composite image complete */
+
+                                    if (fres != FLASH_OK) {
+                                        UARTIF_uartPrintf(0, "Image header write fail slot=%u err=%d\r\n",
+                                                          currentImageSlot, fres);
+                                    } else {
+                                        UARTIF_uartPrintf(0, "Image header written slot=%u\r\n",
+                                                          currentImageSlot);
                                     }
                                 }
                                 else
@@ -669,25 +678,44 @@ void UARTIF_passThrough(void)
                                 UARTIF_uartPrintf(0, "DEBUG: redLayerReceived=%u, blackLayerReceived=%u, lastImageIsRed=%u\r\n", 
                                                   redLayerReceived, blackLayerReceived, lastImageIsRed);
                                 
-                                /* 根据接收的层数来决定显示模式 */
-                                showMode = IMAGE_BW;
-                                if (redLayerReceived && blackLayerReceived) {
-                                    /* 合成图像：同时有红黑两层 */
-                                    showMode = IMAGE_BW_AND_RED;
-                                    UARTIF_uartPrintf(0, "Display mode: IMAGE_BW_AND_RED (Composite)\r\n");
-                                } else if (lastImageIsRed) {
-                                    /* 只有红色层 */
-                                    showMode = IMAGE_BW_AND_RED;
-                                    UARTIF_uartPrintf(0, "Display mode: IMAGE_BW_AND_RED (Red only)\r\n");
-                                } else {
-                                    /* 只有黑白层 */
-                                    UARTIF_uartPrintf(0, "Display mode: IMAGE_BW (Black&White only)\r\n");
+                                /* 如果缺少某层，补全清除 */
+                                if (redLayerReceived && !blackLayerReceived) {
+                                    /* 已收红色，缺黑色 - 清除黑色页 */
+                                    uint16_t j;
+                                    uint16_t wid;                                    
+                                    for (j = 0; j <= MAX_FRAME_NUM; ++j) {
+                                        memset(buffer, 0xFF, PAYLOAD_SIZE);
+                                        wid = (uint16_t)(j | ((uint16_t)currentImageSlot << 8));
+                                        FM_writeData(MAGIC_BW_IMAGE_DATA, wid, buffer, PAYLOAD_SIZE);
+                                        if (fres != FLASH_OK) {
+                                            UARTIF_uartPrintf(0, "CLEAR BW page %u fail id=0x%04X err=%d\n", j, wid, fres);
+                                            break;
+                                        }
+                                    }
+                                    fres = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, currentImageSlot);
+                                    UARTIF_uartPrintf(0, "DISPLAY: RED layer only, clearing BW pages\r\n");
+                                } else if (!redLayerReceived && blackLayerReceived) {
+                                    /* 已收黑色，缺红色 - 清除红色页 */
+                                    uint16_t j;
+                                    uint16_t wid;
+                                    for (j = 0; j <= MAX_FRAME_NUM; ++j) {
+                                        memset(buffer, 0x00, PAYLOAD_SIZE);
+                                        wid = (uint16_t)(j | ((uint16_t)currentImageSlot << 8));
+                                        FM_writeData(MAGIC_RED_IMAGE_DATA, wid, buffer, PAYLOAD_SIZE);
+                                        if (fres != FLASH_OK) {
+                                            UARTIF_uartPrintf(0, "CLEAR BW page %u fail id=0x%04X err=%d\n", j, wid, fres);
+                                            break;
+                                        }
+                                    }
+                                    fres = FM_writeImageHeader(MAGIC_RED_IMAGE_HEADER, currentImageSlot);
+                                    UARTIF_uartPrintf(0, "DISPLAY: BW layer only, clearing RED pages\r\n");
                                 }
 
-                                EPD_WhiteScreenGDEY042Z98UsingFlashDate(showMode, currentImageSlot);
+                                EPD_WhiteScreenGDEY042Z98UsingFlashDate(currentImageSlot);
                                 receivedPageCount = 0;
-                                
-                                /* 显示完成后重置标志，准备下一个图像 */
+                                /* 显示完成后清理传输标志，准备下一个图像 */
+                                transferInProgress = false;
+                                /* DISPLAY processed */
                                 redLayerReceived = 0;
                                 blackLayerReceived = 0;
                             }
@@ -894,6 +922,18 @@ uint8_t UARTIF_passThroughCmd(void)
     uint8_t tcmd = cmd;
     cmd = 0xff;
     return tcmd;
+}
+
+/**
+ * @brief 返回当前是否正在进行图像传输或显示（用于阻止进入低功耗）
+ */
+boolean_t UARTIF_isTransferActive(void)
+{
+    if (transferInProgress) return TRUE;
+    if (receivedPageCount != 0) return TRUE;
+    if (redLayerReceived || blackLayerReceived) return TRUE;
+    if (bufferIndex != 0) return TRUE;
+    return FALSE;
 }
 
 uint16_t UARTIF_fetchDataFromUart(uint8_t *buf, uint16_t *idx)

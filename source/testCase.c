@@ -489,7 +489,7 @@ void TEST_WriteImage(void)
 
     if (result == FLASH_OK)
     {
-        result = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, 0x01, 0u);
+        result = FM_writeImageHeader(MAGIC_BW_IMAGE_HEADER, 0x01);
     }
 
     if (result == FLASH_OK)
